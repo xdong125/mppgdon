@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import Page from './Page.vue'
+import Library from './Library.vue'
 import { genres, isMedia, languages, mediaKey, mediaRows, posterUrl, sortOptions } from './tmdb'
 import type { Ref } from 'vue'
 import type { Media, MediaKind } from './tmdb'
 import type { Api } from './types'
 
 const props = defineProps<{ api: Api; pluginId: string }>()
-const tab = ref<'tmdb' | 'pansou'>('tmdb')
+const tab = ref<'tmdb' | 'pansou' | 'library'>('tmdb')
 const kind = ref<MediaKind>('movies')
 const sort = ref('popularity.desc'), genre = ref(''), language = ref('')
 const rating = ref(0), appliedRating = ref(0)
@@ -107,6 +108,7 @@ onBeforeUnmount(() => activeRequest?.abort())
     <nav class="page-tabs" aria-label="搜索来源">
       <button type="button" :aria-pressed="tab === 'tmdb'" @click="tab = 'tmdb'">TheMovieDb</button>
       <button type="button" :aria-pressed="tab === 'pansou'" @click="tab = 'pansou'">网盘搜索</button>
+      <button type="button" :aria-pressed="tab === 'library'" @click="tab = 'library'">媒体库</button>
     </nav>
     <section v-show="tab === 'tmdb'">
       <form class="title-search" @submit.prevent="searchTitles">
@@ -163,6 +165,7 @@ onBeforeUnmount(() => activeRequest?.abort())
       </div>
     </section>
     <Page v-if="tab === 'pansou'" :api="api" :plugin-id="pluginId" embedded />
+    <Library v-if="tab === 'library'" :api="api" :plugin-id="pluginId" />
 
     <dialog ref="dialog" class="share-dialog" aria-labelledby="mp-share-dialog-title" @close="selected = null">
       <header class="dialog-heading">

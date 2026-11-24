@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { mapLibraryPath } from './libraryPaths'
 const props = defineProps<{initialConfig?: Record<string, unknown>}>()
 const emit = defineEmits(['save', 'close', 'switch'])
 const config = ref({enabled: false, pansou_url: 'https://pansou.tiandechi.com', pansou_token: '',
-  cms_url: '', cms_login_token: '', cms_sync_path: '', cms_sync_cid: '0', cms_sync_live: false, ...props.initialConfig})
+  cms_url: '', cms_login_token: '', cms_sync_path: '', cms_sync_cid: '0', cms_sync_live: false,
+  library_movie_root: '', library_tv_root: '', library_path_mapping: '', ...props.initialConfig})
 const error = ref('')
+const testPath = ref('')
+const mappedPath = computed(() => {
+  try { return testPath.value ? mapLibraryPath(testPath.value, config.value.library_path_mapping) : '' }
+  catch (cause) { return (cause as Error).message }
+})
 watch(() => props.initialConfig, value => {if (value) config.value = {...config.value, ...value}})
 function save() {
   error.value = ''
@@ -12,6 +19,14 @@ function save() {
     const url = new URL(String(config.value.pansou_url))
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error()
   } catch { error.value = '请填写有效的 PanSou HTTP/HTTPS 服务地址。'; return }
+  try {
+    mapLibraryPath(testPath.value || '/', config.value.library_path_mapping)
+    for (const root of [config.value.library_movie_root, config.value.library_tv_root]) {
+      if (root && (!/^(\/|[a-zA-Z]:[\\/])/.test(root.trim()) || root.split(/[\\/]/).includes('..'))) {
+        throw new Error('媒体根目录须为 MP 可访问的绝对路径，不能包含 ..。')
+      }
+    }
+  } catch (cause) { error.value = (cause as Error).message; return }
   if (config.value.cms_url || config.value.cms_sync_path || config.value.cms_sync_live) {
     try {
       const url = new URL(config.value.cms_url.trim())
@@ -49,6 +64,15 @@ function save() {
         <label>分享目录 CID（0 = 整个分享）<input v-model="config.cms_sync_cid" type="text" inputmode="numeric" maxlength="20" /></label>
         <label class="mp-toggle"><input v-model="config.cms_sync_live" type="checkbox" /> 启用真实提交（未勾选时仅演练）</label>
       </fieldset>
+      <fieldset class="cms-settings">
+        <legend>媒体库索引</legend>
+        <label>电影根目录（MP 内）<input v-model="config.library_movie_root" type="text" placeholder="/mnt/media/电影" /></label>
+        <label>电视剧根目录（MP 内）<input v-model="config.library_tv_root" type="text" placeholder="/mnt/media/电视剧" /></label>
+        <label>MP → CMS 路径替换<textarea v-model="config.library_path_mapping" rows="3" placeholder="/mnt/media#/media" /></label>
+        <label>路径转换预览<input v-model="testPath" type="text" placeholder="输入 MP 中的完整路径" /></label>
+        <output v-if="mappedPath" class="mapped-path">{{ mappedPath }}</output>
+        <p>留空替换规则表示路径不变。保存后进入「媒体库」手动扫描，MP 必须能读取这两个挂载目录。此阶段仅建立索引和预览映射；分享同步仍使用上方的固定 STRM 目录。</p>
+      </fieldset>
       <p v-if="error" role="alert">{{ error }}</p>
       <footer><button type="button" @click="emit('close')">关闭</button><button type="button" @click="emit('switch')">前往搜索</button><button class="mp-save" type="submit">保存配置</button></footer>
     </form>
@@ -59,4 +83,6 @@ function save() {
 .cms-settings{min-width:0;margin:0;padding:14px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.2);border-radius:8px;display:grid;gap:12px}
 .cms-settings legend{padding:0 6px;font-size:14px;font-weight:600}
 .cms-settings input{box-sizing:border-box;min-width:0}
+.cms-settings textarea{box-sizing:border-box;width:100%;padding:10px;color:inherit;background:transparent;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.25);border-radius:8px;font:inherit}
+.mapped-path{font-size:13px;overflow-wrap:anywhere}
 </style>

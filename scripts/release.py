@@ -31,13 +31,16 @@ def main():
     archive = target / f'{tag.lower()}.zip'
     with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as package_zip:
         for source in sorted(folder.rglob('*')):
-            if source.is_file() and '__pycache__' not in source.parts:
+            if (source.is_file() and '__pycache__' not in source.parts
+                    and source.suffix.lower() not in {'.db', '.sqlite', '.sqlite3'}
+                    and not source.name.endswith(('-wal', '-shm', '-journal'))):
                 package_zip.write(source, source.relative_to(folder).as_posix())
     with zipfile.ZipFile(archive) as package_zip:
         assert '__init__.py' in package_zip.namelist()
         assert 'search.py' in package_zip.namelist()
         assert 'dist/assets/remoteEntry.js' in package_zip.namelist()
         assert not any('node_modules' in n or '__pycache__' in n or n.startswith('tests/') for n in package_zip.namelist())
+        assert not any(n.endswith(('.db', '.sqlite', '.sqlite3', '-wal', '-shm', '-journal')) for n in package_zip.namelist())
     (target / 'notes.md').write_text(meta['history']['v' + meta['version']] + '\n\nMoviePilot V3 测试版。使用方法见仓库 README。\n', encoding='utf-8')
     print(f'{tag}\n{archive.relative_to(ROOT).as_posix()}')
 

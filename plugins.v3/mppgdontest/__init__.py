@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sqlite3
 import threading
 
 from fastapi import Depends
@@ -13,6 +14,7 @@ from app.sdk.plugin import _PluginBase
 
 from .search import DEFAULT_URL, SearchData, SearchError, SearchRequest, StatusData, normalize_base, normalize_results
 from .share_sync import ShareSync, SyncConfig, SyncRequest, SyncResult
+from .library import LibraryConfig, LibraryIndex, LibraryView
 
 
 class MppgdonTest(_PluginBase):
@@ -21,7 +23,7 @@ class MppgdonTest(_PluginBase):
     plugin_name = "MPPGDON 网盘搜索"
     plugin_desc = "通过 PanSou 搜索、筛选和去重 115 分享资源。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Moviepilot_A.png"
-    plugin_version = "0.4.0"
+    plugin_version = "0.5.0"
     plugin_author = "xdong125"
     author_url = "https://github.com/xdong125"
     plugin_config_prefix = "mppgdontest_"
@@ -58,6 +60,14 @@ class MppgdonTest(_PluginBase):
                 self._sync = ShareSync(sync, self.get_data_path)
         except SearchError as error:
             self._sync_error = str(error)
+        if not hasattr(self, '_library'):
+            self._library = LibraryIndex(lambda: self.get_data_path())
+        self._library_config = LibraryConfig((), ())
+        self._library_error = ''
+        try:
+            self._library_config = LibraryConfig.from_settings(config)
+        except SearchError as error:
+            self._library_error = str(error)
 
     def get_state(self) -> bool:
         """返回用户设置的插件启用状态。"""
@@ -92,7 +102,43 @@ class MppgdonTest(_PluginBase):
             {"path": "/share-sync", "endpoint": self.submit_share_sync, "methods": ["POST"],
              "auth": "bear", "summary": "管理员手动提交 CMS 分享同步",
              "response_model": schemas.Response[SyncResult]},
+            {"path": "/library", "endpoint": self.library_view, "methods": ["GET"],
+             "auth": "bear", "summary": "管理员查看本地媒体库索引",
+             "response_model": schemas.Response[LibraryView]},
+            {"path": "/library/scan", "endpoint": self.library_scan, "methods": ["POST"],
+             "auth": "bear", "summary": "管理员手动扫描已配置的媒体根目录",
+             "response_model": schemas.Response[LibraryView]},
         ]
+
+    async def library_view(
+        self, page: int = 1, keyword: str = '', kind: str = '', entry_type: str = 'media',
+        scrape: str = '', parent: str = '', include_missing: bool = False,
+        _admin=Depends(get_current_active_superuser),
+    ) -> schemas.Response[LibraryView]:
+        if (not 1 <= page <= 100000 or len(keyword) > 120 or len(parent) > 4096
+                or kind not in ('', 'movie', 'tv') or entry_type not in ('', 'directory', 'media', 'nfo', 'image', 'other')
+                or scrape not in ('', 'scraped', 'not_scraped', 'incomplete')):
+            return schemas.Response(success=False, message='索引筛选参数无效。')
+        if self._library_error:
+            return schemas.Response(success=True, data=LibraryView(config_error=self._library_error))
+        try:
+            view = await asyncio.to_thread(self._library.view, self._library_config, page=page, keyword=keyword,
+                                          kind=kind, entry_type=entry_type, scrape=scrape, parent=parent,
+                                          include_missing=include_missing)
+            return schemas.Response(success=True, data=view)
+        except (OSError, sqlite3.Error):
+            return schemas.Response(success=False, message='无法读取插件媒体索引，请检查插件数据目录权限。')
+
+    async def library_scan(self, _admin=Depends(get_current_active_superuser)) -> schemas.Response[LibraryView]:
+        if not self._enabled or self._library_error:
+            return schemas.Response(success=False, message=self._library_error or '请先启用插件。')
+        try:
+            self._library.start(self._library_config)
+            return schemas.Response(success=True, message='扫描已启动，只读媒体目录。', data=LibraryView())
+        except SearchError as error:
+            return schemas.Response(success=False, message=str(error))
+        except (OSError, sqlite3.Error):
+            return schemas.Response(success=False, message='无法启动扫描，请检查插件数据目录权限。')
 
     def get_status(self) -> schemas.Response[StatusData]:
         """仅返回可公开的连接状态，不返回上游 Token。"""
@@ -142,7 +188,7 @@ class MppgdonTest(_PluginBase):
     def _search_sync(payload: SearchRequest, base: str, token: str) -> SearchData:
         """通过稳定网络 SDK 读取有界响应，拒绝重定向且不重试。"""
         headers = {"Accept": "application/json", "Content-Type": "application/json",
-                   "User-Agent": "MoviePilot-Mppgdon/0.4.0"}
+                   "User-Agent": "MoviePilot-Mppgdon/0.5.0"}
         if token:
             headers["Authorization"] = "Bearer " + token
         client = RequestUtils(headers=headers, timeout=35, verify=True)
@@ -181,7 +227,8 @@ class MppgdonTest(_PluginBase):
         """为 Vue 配置页提供默认值；旧版 enabled 配置继续生效。"""
         return None, {"enabled": False, "pansou_url": DEFAULT_URL, "pansou_token": "",
                       "cms_url": "", "cms_login_token": "", "cms_sync_path": "",
-                      "cms_sync_cid": "0", "cms_sync_live": False}
+                      "cms_sync_cid": "0", "cms_sync_live": False,
+                      "library_movie_root": "", "library_tv_root": "", "library_path_mapping": ""}
 
     def get_page(self) -> list:
         """详情页由联邦 Page 组件渲染。"""
@@ -191,3 +238,5 @@ class MppgdonTest(_PluginBase):
         """停止接收新请求；不取消已经发出的 CMS 提交。"""
         self._enabled = False
         self._sync = None
+        if hasattr(self, '_library'):
+            self._library.stop()

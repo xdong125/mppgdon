@@ -43,10 +43,11 @@ def load_plugin():
         spec.loader.exec_module(module)
         search = sys.modules[name + ".search"]
         sync = sys.modules[name + ".share_sync"]
-    return module, search, sync
+        library = sys.modules[name + ".library"]
+    return module, search, sync, library
 
 
-MODULE, SEARCH, SYNC = load_plugin()
+MODULE, SEARCH, SYNC, LIBRARY = load_plugin()
 
 
 def fixture():
