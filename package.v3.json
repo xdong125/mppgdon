@@ -3,13 +3,14 @@
     "name": "MPPGDON 网盘搜索",
     "description": "通过 PanSou 搜索、筛选和去重 115 分享资源。",
     "labels": "网盘,搜索,115",
-    "version": "0.2.1",
+    "version": "0.3.0",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Moviepilot_A.png",
     "author": "xdong125",
     "level": 1,
     "system_version": ">=3.0.0,<4",
     "release": true,
     "history": {
+      "v0.3.0": "新增侧栏 TheMovieDb 页面，支持影片浏览筛选、片名查找、点海报直搜 115 网盘。",
       "v0.2.1": "搜索结果改为紧凑双行横条，详情、复制和打开集中在右侧。",
       "v0.2.0": "新增 PanSou 115 网盘搜索、年份/画质筛选、分享去重与复制；使用 V3 Vue 联邦页面。",
       "v0.1.0": "首次发布 V3 安装测试版，提供启用开关、配置文本和详情页。"

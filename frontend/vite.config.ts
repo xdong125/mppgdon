@@ -6,7 +6,7 @@ export default defineConfig({
   base: './',
   plugins: [vue(), federation({
     name: 'MppgdonTest', filename: 'assets/remoteEntry.js', dts: false,
-    exposes: {'./Page': './src/Page.vue', './Config': './src/Config.vue'},
+    exposes: {'./Page': './src/Page.vue', './AppPage': './src/AppPage.vue', './Config': './src/Config.vue'},
     shared: {vue: {requiredVersion: false, import: false, singleton: true}},
   })],
   build: {

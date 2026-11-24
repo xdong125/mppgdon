@@ -198,6 +198,8 @@ class PluginTests(unittest.TestCase):
         self.assertEqual('v' + meta['version'], next(iter(meta['history'])))
         self.assertTrue(meta['release'])
         self.assertEqual(('vue', 'dist/assets'), self.plugin.get_render_mode())
+        [nav] = self.plugin.get_sidebar_nav()
+        self.assertEqual(('main', 'discovery', 'search'), (nav['nav_key'], nav['section'], nav['permission']))
         for route in self.plugin.get_api():
             self.assertEqual('bear', route['auth'])
             self.assertIn('data', route['response_model'].model_fields)

@@ -2,10 +2,13 @@
 import { inject, onMounted, ref } from 'vue'
 import type { Api, Envelope, Item, Results, Status } from './types'
 
-const props = defineProps<{api: Api; pluginId: string; sourcePluginId?: string}>()
+const props = defineProps<{
+  api: Api; pluginId: string; sourcePluginId?: string; embedded?: boolean
+  initialMedia?: {title: string; year: string}
+}>()
 const emit = defineEmits(['close', 'switch', 'action'])
 const toast = inject<{success(message: string): unknown} | null>('moviepilot:toast', null)
-const keyword = ref(''), year = ref(''), resolution = ref('all')
+const keyword = ref(props.initialMedia?.title ?? ''), year = ref(props.initialMedia?.year ?? ''), resolution = ref('all')
 const status = ref<Status | null>(null), results = ref<Results | null>(null)
 const busy = ref(false), error = ref(''), notice = ref(''), searched = ref(false)
 const expandedItemId = ref<string | null>(null)
@@ -49,12 +52,17 @@ async function copy(item: Item) {
   } catch { notice.value = '浏览器无法自动复制，请点击“详情”后手动复制。' }
 }
 
-onMounted(loadStatus)
+async function initialize() {
+  await loadStatus()
+  if (props.initialMedia && status.value?.enabled && !status.value.config_error) await search()
+}
+
+onMounted(initialize)
 </script>
 
 <template>
   <section class="mp-search">
-    <header class="mp-heading">
+    <header v-if="!embedded" class="mp-heading">
       <div><p class="mp-eyebrow">PAN SOU · 115</p><h2>网盘搜索</h2><p>搜索影视资源，核对分享信息。</p></div>
       <div class="mp-actions"><button type="button" @click="emit('switch')">连接设置</button><button type="button" @click="emit('close')">关闭</button></div>
     </header>
@@ -66,7 +74,7 @@ onMounted(loadStatus)
       <button class="mp-primary" type="submit" :disabled="busy || !status?.enabled || !!status?.config_error">{{ busy ? '搜索中…' : '搜索资源' }}</button>
     </form>
     <p class="mp-muted">仅搜索 115 · 标题中的季集、画质和链接有效性待自行核实</p>
-    <div v-if="error" class="mp-alert mp-error" role="alert">{{ error }} <button v-if="!status" type="button" @click="loadStatus">重新连接</button></div>
+    <div v-if="error" class="mp-alert mp-error" role="alert">{{ error }} <button v-if="!status" type="button" @click="initialize">重新连接</button></div>
     <div v-if="notice" class="mp-alert" role="status">{{ notice }}</div>
     <div v-if="busy" class="mp-empty" role="status">正在从 PanSou 搜索，请稍候…</div>
     <template v-if="results">

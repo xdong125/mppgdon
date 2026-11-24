@@ -6,7 +6,7 @@
 - 推送前检查 git status、diff、版本一致性并运行相关测试；只提交本任务文件。
 - 修改插件实现时同步 plugin_version、市场索引 version 和 history。纯文档反馈更新无需提高插件版本。
 - 不提交凭据、本地配置、运行数据或 __pycache__。
-- 当前搜索入口与验证边界见 README.md 和 TEST_REPORT.md；用户已确认 v0.1.0 安装成功，本轮提供 v0.2.1 紧凑列表以供用户实机验证。
+- 当前搜索入口与验证边界见 README.md 和 TEST_REPORT.md；用户已确认 v0.2.1 刷新后显示紧凑列表，本轮提供 v0.3.0 的 TheMovieDb 侧栏页面以供实机验证。
 - 回归范围按实际改动收敛；纯界面调整只做相关前端验证和发布门禁，不重复运行无关后端用例或真实环境测试。
 
 - 当前ID继续使用MppgdonTest以原位更新，展示名为MPPGDON网盘搜索。Vue页面源码frontend/，完整构建产物提交plugins.v3/mppgdontest/dist/assets；必须通过官方联邦CSS门禁。

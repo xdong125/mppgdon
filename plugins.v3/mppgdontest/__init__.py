@@ -17,7 +17,7 @@ class MppgdonTest(_PluginBase):
     plugin_name = "MPPGDON 网盘搜索"
     plugin_desc = "通过 PanSou 搜索、筛选和去重 115 分享资源。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Moviepilot_A.png"
-    plugin_version = "0.2.1"
+    plugin_version = "0.3.0"
     plugin_author = "xdong125"
     author_url = "https://github.com/xdong125"
     plugin_config_prefix = "mppgdontest_"
@@ -58,6 +58,13 @@ class MppgdonTest(_PluginBase):
     def get_render_mode() -> tuple[str, str]:
         """使用宿主加载的 Vue 联邦页面。"""
         return "vue", "dist/assets"
+
+    @staticmethod
+    def get_sidebar_nav() -> list[dict]:
+        """通过宿主导航注册独立页面，不修改原生探索。"""
+        return [{"nav_key": "main", "title": "TheMovieDb 网盘搜索",
+                 "icon": "mdi-movie-search-outline", "section": "discovery",
+                 "permission": "search", "order": 30}]
 
     def get_api(self) -> list[dict]:
         """注册带宿主 Bearer 鉴权和具体响应模型的接口。"""
@@ -104,7 +111,7 @@ class MppgdonTest(_PluginBase):
     def _search_sync(payload: SearchRequest, base: str, token: str) -> SearchData:
         """通过稳定网络 SDK 读取有界响应，拒绝重定向且不重试。"""
         headers = {"Accept": "application/json", "Content-Type": "application/json",
-                   "User-Agent": "MoviePilot-Mppgdon/0.2.1"}
+                   "User-Agent": "MoviePilot-Mppgdon/0.3.0"}
         if token:
             headers["Authorization"] = "Bearer " + token
         client = RequestUtils(headers=headers, timeout=35, verify=True)

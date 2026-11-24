@@ -1,5 +1,13 @@
 # 测试报告
 
+## v0.3.0 TheMovieDb 搜索页
+
+- 两项定向 Vue 用例通过：电影/剧集与排序、风格、语言、最低评分参数；片名查询限定 TMDB 来源，点海报将片名和年份交给当前插件实例的 PanSou 接口，关闭弹窗保留列表。
+- 一项 Python 菜单、版本与接口合同用例通过。类型检查、生产构建、官方版本及联邦 CSS 门禁通过。
+- 本机浏览器以真实生产 `./AppPage` 联邦构建和模拟宿主 API 显示筛选和海报，点击《钢铁侠》自动填 2008 年并显示两条紧凑的模拟分享。未访问 MP 实例或做真实搜索；真实菜单显示和实际查询待用户实机验证。
+
+集成依据：[MoviePilot 官方侧栏注册指南](https://github.com/jxxghp/MoviePilot-Plugins/blob/main/docs/faq/17-register-plugin-sidebar-nav.md)、[原生 TMDB 浏览实现](https://github.com/jxxghp/MoviePilot-Frontend/blob/v3/src/views/discover/TheMovieDbView.vue)、[宿主媒体搜索](https://github.com/jxxghp/MoviePilot/blob/v3/app/api/endpoints/media.py)。
+
 ## v0.2.1 紧凑结果列表
 
 - 本轮仅改结果页布局和版本元数据：收起时每条 48 CSS px，左侧两行文字，右侧为详情、复制和打开；完整标题、链接和提取码按需展开。
