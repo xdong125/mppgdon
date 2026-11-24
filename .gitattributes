@@ -1,0 +1,2 @@
+# 联邦产物包含第三方运行时字符串，保留构建器原始输出。
+plugins.v3/**/dist/** linguist-generated=true -whitespace

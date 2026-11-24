@@ -1,33 +1,42 @@
-# v0.1.0 测试报告
+# v0.2.0 搜索版测试报告
 
-日期：2026-11-24，目标 MoviePilot V3。
+日期：2026-11-24。目标 MoviePilot V3，插件 ID 继续使用 MppgdonTest。
+
+## 本地验证
+
+- Python 后端15项测试全部通过：两种PanSou响应/业务包装、115去重、年份画质筛选、非法域名/协议/提取码、密码缺失补充/冲突、空结果与错误区分、请求验证、SDK请求参数及证书校验、响应关闭、鉴权声明、Token脱敏、HTTP/超时/无效JSON/过大响应、重复初始化和取消后的并发保护。
+- Vue 前端7项组件测试全部通过：当前实例API作用域、三字段envelope、文本转义、空输入/年份验证、失败与空结果区分、防重复及网络失败不重试、提取码冲突、旧配置保留与URL校验。
+- vue-tsc类型检查、Vite生产构建、Python编译、官方check_plugin_versions.py、官方check_federation_css.py和git diff --check均通过。
+- Release生成脚本成功生成mppgdontest_v0.2.0.zip，包含Python源码与完整dist/assets/remoteEntry.js及其所有分块，不含测试、node_modules或本地数据。
+- 浏览器已加载实际生产remoteEntry.js（模拟宿主提供共享Vue），成功渲染搜索界面和虚构结果卡片。该检查验证真实联邦产物，数据/API仍为Mock，不能当成真实MP宿主联调。
+
+验证命令：
+
+```sh
+python tests/v3/mppgdontest/test_plugin.py -v
+python -m compileall plugins.v3/mppgdontest
+cd frontend
+npm run typecheck
+npm test
+npm run build
+# 返回仓库根目录后生成正式安装包
+python scripts/release.py
+```
+
+SDK网络边界使用Mock，测试不调用CMS、转存、下载器或用户媒体库。网络请求使用固定/api/search，cloud_types=["115"]，verify=True，禁用重定向和自动重试；响应按流限制8MiB。所有输出模型明确声明，Token不出现在status/search响应。
+
+## 真实环境证据与限制
+
+- v0.1.0：用户已明确反馈“安装成功了”，仅证明此前最小测试版能安装。
+- v0.2.0：开发机向用户指定PanSou服务进行一次只读真实搜索，结果超时；随后一次只读健康检查也未能连接。没有将失败标为空结果，没有自动重试，没有声称本轮真实搜索成功。
+- 当前不把开发机到第三方服务的失败推广为MP端必然失败。MP容器的DNS、代理、证书及第三方服务状态需用户实测；服务地址可在插件中更换。
+- 新版在用户MP中的更新、Vue宿主加载、认证、实际搜索及复制行为尚待用户验证。未操作用户MP，也未重启或修改CMS工作台。
 
 ## 开发依据
 
-已阅读官方 `docs/Plugin_Development.md`（V3 完整主指南）、`docs/Repository_Guide.md` 和仓库 README；并核对 MoviePilot `v3` 分支的 `app/sdk/plugin/base.py` 与 `app/adapters/system/plugin/package.py`。
+已读取官方V3开发指南、仓库/发布指南、API响应专题、V3前端联邦指南、PageRender/FormRender、宿主RequestUtils实现以及PanSou官方API文档。
 
-- 开发指南 blob：`dd3a856cf4c5795562414f5fc5cd6a8b559a646a`。
-- V3 基类 blob：`db38a184db0299d8356c3f94612797859f72eb4a`。
-- 官方版本门禁脚本 blob：`1c96a90f31430d55b5037037b81ec19e2366cf77`。
-
-## 本地结果
-
-- Python 编译通过。
-- 直接运行官方版本门禁脚本通过，索引、类版本、历史记录均为 `0.1.0`。
-- 对照官方基类源码，6个抽象方法及其参数名均完整匹配。
-- 7项单元测试全部通过：初始停用、配置展示、停用/重复初始化、实例隔离、普通文本页面、表单模型/空扩展、市场元数据一致性。
-- 单元测试以生产模块名 `app.plugins.mppgdontest` 导入；宿主基类使用 Mock，仅验证插件自己的行为，不声称运行了完整宿主。
-- `release: false` 与官方安装器源码文件列表分发路径一致。插件无额外依赖，无需前端构建。
-
-本地运行命令：
-
-```sh
-python -m compileall plugins.v3/mppgdontest
-python tests/v3/mppgdontest/test_plugin.py -v
-```
-
-## 用户实机反馈
-
-2026-11-24，用户明确反馈“安装成功了”。据用户实测确认，当前测试插件已能安装到其 MoviePilot V3。配置持久化、详情页渲染、启停及重启后加载尚未获得进一步反馈，不因安装成功自动视为全部通过。
-
-安装步骤见 README。出现问题时需要 MP 的完整 V3 版本号和脱敏错误日志；无需提供密码或 Token。
+- 使用plugins.v3与package.v3.json，继承app.sdk.plugin._PluginBase。
+- 通过app.sdk.network.RequestUtils发送搜索；API使用宿主Bearer和schemas.Response[具体数据模型]。
+- 联邦Page/Config复用宿主注入api和当前pluginId；无Vuetify/MDI全局样式。
+- 发布配置release=true，GitHub Actions打包固定版本资产；开发和发布均通过本地Git提交/推送。

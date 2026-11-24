@@ -1,0 +1,39 @@
+name: Package MoviePilot plugin
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.v3.json
+      - plugins.v3/**
+      - scripts/release.py
+      - .github/workflows/release.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: plugin-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and package
+        id: package
+        shell: bash
+        run: |
+          python3 scripts/release.py > release-info.txt
+          echo "tag=$(head -n 1 release-info.txt)" >> "$GITHUB_OUTPUT"
+          echo "asset=$(tail -n 1 release-info.txt)" >> "$GITHUB_OUTPUT"
+      - name: Publish installable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.package.outputs.tag }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; bump the plugin version for changes."
+            exit 0
+          fi
+          gh release create "$TAG" "$ASSET" --target "$GITHUB_SHA" --title "$TAG" --notes-file release-out/notes.md --repo "$GITHUB_REPOSITORY"

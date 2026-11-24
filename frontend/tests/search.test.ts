@@ -1,0 +1,77 @@
+import { describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import Page from '../src/Page.vue'
+import Config from '../src/Config.vue'
+
+function setup(post = vi.fn()) {
+  const api = {get: vi.fn().mockResolvedValue({success: true, message: '', data: {enabled: true, version: '0.2.0', pansou_url: 'https://example.test', token_set: false, config_error: ''}}), post}
+  const wrapper = mount(Page, {props: {api, pluginId: 'MppgdonTestCopy'}})
+  return {wrapper, api}
+}
+const item = {id: 'abc', title: '<img src=x onerror=alert(1)>', url: 'https://115cdn.com/s/example', password: 'abcd', source: 'fixture', published: '', quality: '2160p', episode: 'S01E01', collection: false, password_conflict: false}
+
+describe('search page host contract', () => {
+  it('uses scoped API, current instance ID and final envelope; renders text safely', async () => {
+    const {wrapper, api} = setup(vi.fn().mockResolvedValue({success: true, message: '', data: {items: [item], duplicates: 1, filtered: 2}}))
+    await flushPromises()
+    await wrapper.get('input[name=keyword]').setValue('测试剧')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(api.post).toHaveBeenCalledWith('plugin/MppgdonTestCopy/search', {keyword: '测试剧', year: '', resolution: 'all'}, expect.objectContaining({feedback: 'silent', timeout: 65000}))
+    expect(wrapper.findAll('article')).toHaveLength(1)
+    expect(wrapper.find('img').exists()).toBe(false)
+    expect(wrapper.text()).toContain(item.title)
+    expect(wrapper.get('a').attributes('rel')).toBe('noopener noreferrer')
+  })
+  it('does not send empty or invalid year searches', async () => {
+    const {wrapper, api} = setup(); await flushPromises()
+    await wrapper.get('form').trigger('submit')
+    expect(api.post).not.toHaveBeenCalled()
+    await wrapper.get('input[name=keyword]').setValue('测试剧')
+    await wrapper.get('input[name=year]').setValue('bad')
+    await wrapper.get('form').trigger('submit')
+    expect(api.post).not.toHaveBeenCalled()
+  })
+  it('distinguishes business failure from a successful empty result', async () => {
+    const {wrapper, api} = setup(vi.fn().mockResolvedValueOnce({success: false, message: 'PanSou HTTP 429', data: null}).mockResolvedValueOnce({success: true, message: '', data: {items: [], duplicates: 0, filtered: 0}}))
+    await flushPromises(); await wrapper.get('input[name=keyword]').setValue('测试剧')
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(wrapper.get('[role=alert]').text()).toContain('429')
+    expect(wrapper.text()).not.toContain('未找到匹配')
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(wrapper.text()).toContain('未找到匹配')
+    expect(api.post).toHaveBeenCalledTimes(2)
+  })
+  it('prevents double submits and does not retry a network rejection', async () => {
+    let reject!: (reason: Error) => void
+    const {wrapper, api} = setup(vi.fn().mockImplementation(() => new Promise((_, fail) => {reject = fail})))
+    await flushPromises(); await wrapper.get('input[name=keyword]').setValue('测试剧')
+    await wrapper.get('form').trigger('submit'); await wrapper.get('form').trigger('submit')
+    expect(api.post).toHaveBeenCalledTimes(1)
+    reject(new Error('network')); await flushPromises()
+    expect(wrapper.get('[role=alert]').text()).toContain('连接')
+    expect(wrapper.get('button[type=submit]').attributes('disabled')).toBeUndefined()
+  })
+  it('blocks quick actions for conflicting passwords and preserves manual details', async () => {
+    const {wrapper} = setup(vi.fn().mockResolvedValue({success: true, message: '', data: {items: [{...item, password_conflict: true}], duplicates: 1, filtered: 0}}))
+    await flushPromises(); await wrapper.get('input[name=keyword]').setValue('测试剧')
+    await wrapper.get('form').trigger('submit'); await flushPromises()
+    expect(wrapper.get('article button').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('article a').exists()).toBe(false)
+    expect(wrapper.get('details').text()).toContain('abcd')
+  })
+})
+
+describe('configuration upgrade', () => {
+  it('preserves enabled and unknown legacy config fields when saving', async () => {
+    const wrapper = mount(Config, {props: {initialConfig: {enabled: true, message: 'legacy'}}})
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('save')?.[0]?.[0]).toEqual({enabled: true, message: 'legacy', pansou_url: 'https://pansou.tiandechi.com', pansou_token: ''})
+  })
+  it('rejects URLs containing credentials', async () => {
+    const wrapper = mount(Config, {props: {initialConfig: {pansou_url: 'https://user:secret@host'}}})
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(wrapper.get('[role=alert]').text()).toContain('有效')
+  })
+})

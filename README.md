@@ -1,25 +1,31 @@
 # mppgdon
 
-xdong125 的 MoviePilot V3 插件仓库。当前提供 **MPPGDON 安装测试 v0.1.0**。
+xdong125 的 MoviePilot V3 插件仓库。当前版本：**MPPGDON 网盘搜索 v0.2.0**。
 
-## 安装测试
+## 更新与使用
 
-1. 在 MoviePilot 的插件市场仓库配置中追加 `https://github.com/xdong125/mppgdon`。若通过环境变量 `PLUGIN_MARKET` 配置，保留已有仓库，多个地址用英文逗号分隔。
-2. 刷新插件市场，搜索 **MPPGDON 安装测试**，点击安装。
-3. 打开插件配置，开启“启用测试插件”，把展示文本改为“我的 MP 插件安装成功”，保存。
-4. 打开插件详情页，应看到版本 `0.1.0`、状态“已启用”以及刚保存的文本。
-5. 刷新页面或重启 MP 后再查看，确认配置保留；关闭启用开关并保存，确认状态变为“已停用”。
+1. MP 插件市场仓库配置追加 `https://github.com/xdong125/mppgdon`，保留已有仓库地址（`PLUGIN_MARKET` 多地址以英文逗号分隔）。
+2. 已安装 v0.1.0 的用户直接更新原“MPPGDON 安装测试”插件；插件 ID 仍为 `MppgdonTest`，更新后名称变为“MPPGDON 网盘搜索”。无需卸载重装。
+3. 在配置页启用插件，保存 PanSou 服务地址。默认 `https://pansou.tiandechi.com`；此公开服务通常无需 Token。自己的服务有认证时填写 PanSou Token，可含 Bearer 前缀。
+4. 打开插件详情页，输入影视名称，可选年份、4K/1080p，点击“搜索资源”。
+5. 在卡片查看来源、季集、清晰度和分享信息，可复制或打开分享链接。浏览器不允许自动复制时，展开分享信息后手动复制。
 
-仓库使用 `main` 分支。测试版采用源码文件列表安装（`release: false`），不需要手工下载 ZIP。仅支持 MoviePilot `>=3.0.0,<4`。
+本版只搜索 **115 分享**，合并 PanSou 原始/分组响应并按分享标识去重。未标注年份的标题不会仅因年份筛选被排除；画质、季集均来自标题。链接有效性及实际内容仍需自行核对。提取码冲突会提示并禁用复制/打开快捷操作。搜索结果仅保留在当前页面，不写入宿主媒体数据。
 
-本插件只显示配置文本，没有第三方依赖、网络请求、定时任务、CMS 对接或媒体文件操作。不会自动验证 STRM 播放或触发转存。
+本版不调用 CMS、不执行转存或分享同步，不创建定时任务。
 
-## 开发依据
+## 分发方式
 
-- [官方 V3 开发手册](https://github.com/jxxghp/MoviePilot-Plugins/blob/main/docs/Plugin_Development.md)
-- [官方仓库与发布约定](https://github.com/jxxghp/MoviePilot-Plugins/blob/main/docs/Repository_Guide.md)
-- 插件：`plugins.v3/mppgdontest/__init__.py`，主类/ID：`MppgdonTest`。
-- 市场索引：`package.v3.json`；旧代索引为空，避免被 V1/V2 安装。
-- 使用稳定 SDK `app.sdk.plugin._PluginBase` 与 Vuetify JSON 页面。
+支持 MoviePilot `>=3.0.0,<4`，使用 `main` 分支的 `package.v3.json`。v0.2.0 使用官方 Vue 联邦方式，完整构建产物位于 `dist/assets`，`release: true`；GitHub Actions 将运行源码和产物打包为 `MppgdonTest_v0.2.0` Release 中的 `mppgdontest_v0.2.0.zip`。MP 安装器自动下载，无需手工上传文件。
 
-本地验证与真实宿主验证边界见 [TEST_REPORT.md](TEST_REPORT.md)。
+若更新后仍显示旧页面，请刷新 MP 浏览器页面。无法发现更新时先刷新市场，检查 MP 到 GitHub API / raw.githubusercontent.com / Releases 下载域名的连接。默认第三方 PanSou 的可用性不由本仓库保证，可在配置中更换服务根地址。
+
+## 开发与验证
+
+- Python 无新增依赖，复用宿主 `app.sdk.plugin`、`app.sdk.network`、`schemas.Response` 与 Pydantic。
+- 前端位于 `frontend/`，使用 Node.js 22.12+（已测试 Node 24）：`npm ci --ignore-scripts`、`npm run typecheck`、`npm test`、`npm run build`。
+- 后端回归：在宿主 Python 环境运行 `python tests/v3/mppgdontest/test_plugin.py -v`；测试用 Mock 替换宿主和上游边界。
+- 本地页面预览：`npm run preview:local`。预览明确使用虚构数据，仅验证交互；不会访问 MP、CMS 或真实分享。
+- 发布前运行官方版本门禁、联邦 CSS 门禁和 `git diff --check`；通过本地 Git commit/push 发布，不使用网页逐文件上传。
+
+依据：[官方 V3 手册](https://github.com/jxxghp/MoviePilot-Plugins/blob/main/docs/Plugin_Development.md)、[V3 API 响应约定](https://github.com/jxxghp/MoviePilot-Plugins/blob/main/docs/V3_API_Response_Adaptation.md)、[前端联邦指南](https://github.com/jxxghp/MoviePilot-Frontend/blob/v3/docs/module-federation-guide.md)、[PanSou API](https://github.com/fish2018/pansou#api文档)。测试结果与证据边界见 [TEST_REPORT.md](TEST_REPORT.md)。

@@ -7,3 +7,7 @@ __pycache__/
 .pytest_cache/
 data/
 *.log
+node_modules/
+frontend/.vite/
+release-out/
+release-info.txt
