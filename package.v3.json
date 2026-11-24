@@ -1,0 +1,17 @@
+{
+  "MppgdonTest": {
+    "name": "MPPGDON 安装测试",
+    "description": "验证 MoviePilot V3 插件安装、配置保存和启停。",
+    "labels": "测试",
+    "version": "0.1.0",
+    "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Moviepilot_A.png",
+    "author": "xdong125",
+    "level": 1,
+    "system_version": ">=3.0.0,<4",
+    "release": false,
+    "history": {
+      "v0.1.0": "首次发布 V3 安装测试版，提供启用开关、配置文本和详情页。"
+    },
+    "plugin_readme": "https://raw.githubusercontent.com/xdong125/mppgdon/main/plugins.v3/mppgdontest/README.md"
+  }
+}
