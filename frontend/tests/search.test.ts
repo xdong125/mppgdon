@@ -67,6 +67,27 @@ describe('search page host contract', () => {
     await detailsButton.trigger('click')
     expect(wrapper.find('.mp-details').exists()).toBe(false)
   })
+  it('reveals duplicate records under their share without reissuing the search', async () => {
+    const duplicate = {title: '测试剧 1080p', origin: 'raw', quality: '1080p', source: '其他来源', published: '2026-11-24'}
+    const {wrapper, api} = setup(vi.fn().mockResolvedValue({success: true, message: '', data: {
+      items: [{...item, duplicate_records: [duplicate]}], duplicates: 2, filtered: 0,
+    }}))
+    await flushPromises()
+    await wrapper.get('input[name=keyword]').setValue('测试剧')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const toggle = wrapper.get('.mp-duplicates-toggle')
+    expect(toggle.text()).toBe('展开重复')
+    expect(wrapper.find('.mp-duplicate').exists()).toBe(false)
+    await toggle.trigger('click')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(wrapper.get('article .mp-duplicate').text()).toContain('原始结果 · 1080p · 其他来源 · 2026-11-24')
+    expect(wrapper.text()).toContain('显示 1 / 2 条重复记录')
+    await toggle.trigger('click')
+    expect(wrapper.find('.mp-duplicate').exists()).toBe(false)
+    expect(api.post).toHaveBeenCalledOnce()
+    wrapper.unmount()
+  })
 })
 
 describe('configuration upgrade', () => {

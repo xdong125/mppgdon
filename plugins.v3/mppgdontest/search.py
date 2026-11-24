@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 DEFAULT_URL = "https://pansou.tiandechi.com"
 SHARE_HOSTS = {"115.com", "www.115.com", "115cdn.com", "www.115cdn.com", "anxia.com", "www.anxia.com"}
+MAX_DUPLICATES_PER_SHARE = 30
 
 
 class SearchError(Exception):
@@ -32,6 +33,16 @@ class SearchRequest(BaseModel):
         return value
 
 
+class DuplicateRecord(BaseModel):
+    """同一分享的另一条命中记录，只保留供比对的元数据。"""
+
+    title: str
+    source: str
+    published: str
+    quality: str
+    origin: Literal["grouped", "raw"]
+
+
 class SearchItem(BaseModel):
     """校验后的分享卡片，标题标签不代表已核实文件内容。"""
 
@@ -45,6 +56,7 @@ class SearchItem(BaseModel):
     episode: str = "季集未标注"
     collection: bool = False
     password_conflict: bool = False
+    duplicate_records: list[DuplicateRecord] = Field(default_factory=list)
 
 
 class SearchData(BaseModel):
@@ -119,7 +131,7 @@ def normalize_results(payload: dict, request: SearchRequest) -> SearchData:
     merged, results = data.get("merged_by_type", {}), data.get("results", [])
     if not isinstance(merged, dict) or not isinstance(results, list) or not isinstance(merged.get("115", []), list):
         raise SearchError("PanSou 搜索结果结构不兼容。")
-    raw = [dict(item, title=item.get("note") or item.get("title", ""))
+    raw = [dict(item, title=item.get("note") or item.get("title", ""), origin="grouped")
            for item in merged.get("115", []) if isinstance(item, dict)]
     for result in results:
         if not isinstance(result, dict) or not isinstance(result.get("links", []), list):
@@ -128,7 +140,7 @@ def normalize_results(payload: dict, request: SearchRequest) -> SearchData:
             if isinstance(link, dict) and link.get("type", link.get("disk_type")) == "115":
                 raw.append(dict(link, title=link.get("work_title") or result.get("title", ""),
                                 source=result.get("channel") or result.get("unique_id", "PanSou"),
-                                datetime=result.get("datetime", "")))
+                                datetime=result.get("datetime", ""), origin="raw"))
     items: dict[str, SearchItem] = {}
     duplicates = filtered = 0
     needle = compact(request.keyword)
@@ -150,9 +162,15 @@ def normalize_results(payload: dict, request: SearchRequest) -> SearchData:
         if request.resolution != "all" and quality != request.resolution:
             filtered += 1
             continue
+        source = str(item.get("source", "PanSou"))[:120]
+        published = str(item.get("datetime", ""))[:40]
         if code in items:
             duplicates += 1
             current = items[code]
+            if len(current.duplicate_records) < MAX_DUPLICATES_PER_SHARE:
+                current.duplicate_records.append(DuplicateRecord(
+                    title=title, source=source, published=published, quality=quality, origin=item["origin"],
+                ))
             if password and current.password and current.password != password:
                 current.password_conflict = True
             elif password and not current.password:
@@ -161,8 +179,7 @@ def normalize_results(payload: dict, request: SearchRequest) -> SearchData:
         episode = re.search(r"S\d{1,2}E\d{1,3}(?:\s*[-~～]\s*(?:S\d{1,2})?E?\d{1,3})?|第\s*\d+\s*(?:[-~～]\s*\d+\s*)?集", title, re.I)
         items[code] = SearchItem(
             id=code, title=title, url=url, password=password,
-            source=str(item.get("source", "PanSou"))[:120],
-            published=str(item.get("datetime", ""))[:40], quality=quality,
+            source=source, published=published, quality=quality,
             episode=episode.group(0).upper() if episode else "季集未标注",
             collection=bool(re.search(r"合集|全集|全\s*\d+\s*集|\d+\s*[-~～]\s*\d+", title)),
         )

@@ -207,7 +207,7 @@ onBeforeUnmount(() => activeRequest?.abort())
 .poster-caption strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
 .poster-caption small{margin-left:auto;opacity:.72;font-size:11px}
 .page-state{text-align:center;margin:16px 0;font-size:13px}.page-state p{margin:10px 0}
-.share-dialog{box-sizing:border-box;width:min(940px,calc(100% - 24px));max-height:calc(100% - 32px);padding:0;overflow:auto;border:1px solid var(--tmdb-line);border-radius:8px;color:inherit;background:rgb(var(--v-theme-surface,255,255,255))}
+.share-dialog{position:fixed;inset:0;margin:auto;box-sizing:border-box;width:min(940px,calc(100% - 24px));height:fit-content;max-height:calc(100dvh - 48px);padding:0;overflow:auto;border:1px solid var(--tmdb-line);border-radius:8px;color:inherit;background:rgb(var(--v-theme-surface,255,255,255))}
 .share-dialog::backdrop{background:rgba(0,0,0,.58)}
 .dialog-heading{position:sticky;top:0;z-index:1;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 16px;border-bottom:1px solid var(--tmdb-line);background:inherit}
 .dialog-heading h2{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:16px}

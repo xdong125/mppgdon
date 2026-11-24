@@ -17,7 +17,7 @@ class MppgdonTest(_PluginBase):
     plugin_name = "MPPGDON 网盘搜索"
     plugin_desc = "通过 PanSou 搜索、筛选和去重 115 分享资源。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Moviepilot_A.png"
-    plugin_version = "0.3.0"
+    plugin_version = "0.3.1"
     plugin_author = "xdong125"
     author_url = "https://github.com/xdong125"
     plugin_config_prefix = "mppgdontest_"
@@ -111,7 +111,7 @@ class MppgdonTest(_PluginBase):
     def _search_sync(payload: SearchRequest, base: str, token: str) -> SearchData:
         """通过稳定网络 SDK 读取有界响应，拒绝重定向且不重试。"""
         headers = {"Accept": "application/json", "Content-Type": "application/json",
-                   "User-Agent": "MoviePilot-Mppgdon/0.3.0"}
+                   "User-Agent": "MoviePilot-Mppgdon/0.3.1"}
         if token:
             headers["Authorization"] = "Bearer " + token
         client = RequestUtils(headers=headers, timeout=35, verify=True)

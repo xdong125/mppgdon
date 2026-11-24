@@ -73,6 +73,29 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(2, result.filtered)
         self.assertEqual("S01E01", result.items[0].episode)
 
+    def test_duplicate_metadata_preserves_origin_without_exposing_alternate_credentials(self):
+        first = {"note": "测试剧 4K", "url": "https://115.com/s/example?password=primary"}
+        grouped = dict(first, note="测试剧 4K 分组", source="plugin:fixture")
+        raw = {"title": "测试剧 4K 原始", "channel": "fixture-channel", "datetime": "2026-11-24",
+               "links": [{"type": "115", "url": "https://anxia.com/s/example?pwd=other"}]}
+        payload = {"merged_by_type": {"115": [first, grouped]}, "results": [raw]}
+        data = SEARCH.normalize_results(payload, SEARCH.SearchRequest(keyword="测试剧"))
+        self.assertEqual(2, data.duplicates)
+        [item] = data.items
+        self.assertTrue(item.password_conflict)
+        self.assertEqual("primary", item.password)
+        self.assertEqual(
+            [("grouped", "plugin:fixture", "测试剧 4K 分组"), ("raw", "fixture-channel", "测试剧 4K 原始")],
+            [(row.origin, row.source, row.title) for row in item.duplicate_records],
+        )
+        self.assertEqual("2026-11-24", item.duplicate_records[1].published)
+        self.assertNotIn("other", data.model_dump_json())
+
+        payload["results"] *= SEARCH.MAX_DUPLICATES_PER_SHARE
+        capped = SEARCH.normalize_results(payload, SEARCH.SearchRequest(keyword="测试剧"))
+        self.assertEqual(SEARCH.MAX_DUPLICATES_PER_SHARE + 1, capped.duplicates)
+        self.assertEqual(SEARCH.MAX_DUPLICATES_PER_SHARE, len(capped.items[0].duplicate_records))
+
     def test_bad_titles_and_urls_filtered(self):
         raw = {"merged_by_type": {"115": [
             {"note": title, "url": url} for title, url in [

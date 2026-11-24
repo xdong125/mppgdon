@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { inject, onMounted, ref } from 'vue'
-import type { Api, Envelope, Item, Results, Status } from './types'
+import { computed, inject, onMounted, ref } from 'vue'
+import type { Api, DuplicateRecord, Envelope, Item, Results, Status } from './types'
 
 const props = defineProps<{
   api: Api; pluginId: string; sourcePluginId?: string; embedded?: boolean
@@ -12,10 +12,18 @@ const keyword = ref(props.initialMedia?.title ?? ''), year = ref(props.initialMe
 const status = ref<Status | null>(null), results = ref<Results | null>(null)
 const busy = ref(false), error = ref(''), notice = ref(''), searched = ref(false)
 const expandedItemId = ref<string | null>(null)
+const showDuplicates = ref(false)
+const visibleDuplicateCount = computed(() => results.value?.items.reduce(
+  (count, item) => count + (item.duplicate_records?.length ?? 0), 0,
+) ?? 0)
 
 function subtitle(item: Item) {
   return [item.password_conflict ? '提取码冲突' : '', item.quality, item.episode,
     item.collection ? '115 合集' : '115 分享', item.source, item.published].filter(Boolean).join(' · ')
+}
+
+function duplicateSubtitle(record: DuplicateRecord) {
+  return [record.origin === 'raw' ? '原始结果' : '分组结果', record.quality, record.source, record.published].filter(Boolean).join(' · ')
 }
 
 async function loadStatus() {
@@ -33,6 +41,7 @@ async function search() {
   if (!keyword.value.trim()) {error.value = '请输入影视名称。'; return}
   if (year.value && !/^(19|20)\d{2}$/.test(year.value)) {error.value = '年份请输入四位数字。'; return}
   busy.value = true; results.value = null; searched.value = false; expandedItemId.value = null
+  showDuplicates.value = false
   try {
     const response = await props.api.post(`plugin/${props.pluginId}/search`, {
       keyword: keyword.value.trim(), year: year.value, resolution: resolution.value,
@@ -78,7 +87,14 @@ onMounted(initialize)
     <div v-if="notice" class="mp-alert" role="status">{{ notice }}</div>
     <div v-if="busy" class="mp-empty" role="status">正在从 PanSou 搜索，请稍候…</div>
     <template v-if="results">
-      <p class="mp-summary">找到 {{ results.items.length }} 个分享 · 合并 {{ results.duplicates }} 次重复 · 过滤 {{ results.filtered }} 条不匹配</p>
+      <div class="mp-summary-bar">
+        <p class="mp-summary">找到 {{ results.items.length }} 个分享 · 合并 {{ results.duplicates }} 次重复 · 过滤 {{ results.filtered }} 条不匹配</p>
+        <button v-if="visibleDuplicateCount" class="mp-duplicates-toggle" type="button" :aria-expanded="showDuplicates"
+          @click="showDuplicates = !showDuplicates">{{ showDuplicates ? '收起重复' : '展开重复' }}</button>
+      </div>
+      <p v-if="showDuplicates && visibleDuplicateCount < results.duplicates" class="mp-muted">
+        显示 {{ visibleDuplicateCount }} / {{ results.duplicates }} 条重复记录
+      </p>
       <p v-if="results.truncated" class="mp-alert">结果较多，仅展示前 200 条。可添加年份或清晰度缩小范围。</p>
       <div class="mp-list">
         <article v-for="item in results.items" :key="item.id" class="mp-row">
@@ -102,6 +118,12 @@ onMounted(initialize)
             <p class="mp-share">{{ item.url }}</p>
             <p>提取码：{{ item.password || '未提供' }}</p>
           </div>
+          <ul v-if="showDuplicates && item.duplicate_records?.length" class="mp-duplicates" aria-label="同一分享的重复记录">
+            <li v-for="(record, index) in item.duplicate_records" :key="index" class="mp-duplicate mp-row-text">
+              <p class="mp-duplicate-title" :title="record.title">{{ record.title }}</p>
+              <p :title="duplicateSubtitle(record)">{{ duplicateSubtitle(record) }}</p>
+            </li>
+          </ul>
         </article>
       </div>
     </template>
@@ -114,6 +136,12 @@ onMounted(initialize)
 .mp-search{padding:24px;color:rgb(var(--v-theme-on-surface,35,42,56));font-family:inherit}.mp-heading,.mp-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}.mp-heading{align-items:flex-start;margin-bottom:24px}.mp-heading h2{font-size:28px;margin:0 0 6px}.mp-heading p{margin:0}.mp-eyebrow{font-size:11px;letter-spacing:2px;opacity:.65;padding-bottom:8px}.mp-form{display:grid;grid-template-columns:minmax(180px,1fr) 120px 150px auto;gap:12px;align-items:end}.mp-form label{font-size:13px;display:grid;gap:7px}.mp-search input,.mp-search select{width:100%;padding:11px 12px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.23);border-radius:8px;background:rgb(var(--v-theme-surface,255,255,255));color:inherit;font:inherit}.mp-search button,.mp-search a{font:inherit;font-size:13px;padding:10px 14px;border-radius:8px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.2);background:transparent;color:inherit;cursor:pointer;text-decoration:none}.mp-search button:disabled{opacity:.45;cursor:default}.mp-search .mp-primary{background:rgb(var(--v-theme-primary,75,102,225));color:white;border-color:transparent;min-height:43px}.mp-muted{font-size:12px;opacity:.65;overflow-wrap:anywhere}.mp-summary{font-size:13px;margin:24px 0 14px}.mp-share{word-break:break-all;user-select:text}.mp-empty{text-align:center;padding:48px 12px;opacity:.65}.mp-alert{padding:12px 16px;margin:14px 0;background:rgba(80,120,200,.1);border-radius:8px;font-size:13px}.mp-error{background:rgba(200,60,60,.12)}.mp-warning{color:#b7791f}.mp-search input:focus,.mp-search select:focus{outline:2px solid rgb(var(--v-theme-primary,75,102,225));outline-offset:2px}@media(max-width:650px){.mp-search{padding:16px}.mp-form{grid-template-columns:1fr 1fr}.mp-form label:first-child{grid-column:1/-1}.mp-primary{grid-column:1/-1}.mp-heading{flex-wrap:wrap}}
 
 .mp-list{display:grid;gap:3px}
+.mp-summary-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:20px 0 10px}
+.mp-summary-bar .mp-summary{margin:0}
+.mp-summary-bar .mp-duplicates-toggle{padding:4px 8px;border-radius:5px;font-size:12px}
+.mp-duplicates{list-style:none;margin:0 10px 0 16px;padding:0 4px 4px 10px;border-inline-start:2px solid rgba(var(--v-theme-on-surface,35,42,56),.18)}
+.mp-duplicate{padding:4px 0}
+.mp-duplicate .mp-duplicate-title{font-size:13px;font-weight:600;opacity:1}
 .mp-row{min-width:0;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(var(--v-theme-on-surface,35,42,56),.14)}
 .mp-row-bar{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;height:48px;padding:0 8px 0 10px}
 .mp-row-text h3,.mp-row-text p{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

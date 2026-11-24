@@ -18,14 +18,16 @@ const api = {
     const params = options?.params
     const data = path === 'media/search' ? [...movies, ...shows].filter(item => String(item.title).includes(params?.title ?? ''))
       : path.startsWith('discover/') ? (path.endsWith('_tvs') ? shows : movies).filter(item => Number(item.vote_average) >= (params?.vote_average ?? 0))
-      : {...config.value, version: '0.3.0'}
+      : {...config.value, version: '0.3.1'}
     return {success: true, message: '', data}
   },
   async post(_path: string, request: {keyword: string; year?: string}) {return {success: true, message: '', data: {
     keyword: request.keyword, raw_115: 3, duplicates: 1, filtered: 0, truncated: false,
     items: [1,2].map(n => ({id: 'preview'+n, title: `${request.keyword} ${request.year ? `(${request.year}) ` : ''}4K WEB-DL · 样例 ${n}`,
       url: `https://115cdn.com/s/preview${n}`, password: 'demo', source: '演示数据（非真实分享）',
-      published: '', quality: '2160p', episode: '季集未标注', collection: false, password_conflict: false})),
+      published: '', quality: '2160p', episode: '季集未标注', collection: false, password_conflict: false,
+      duplicate_records: n === 1 ? [{title: `${request.keyword} 4K · 重复来源样例`, source: '演示频道',
+        published: '2026-11-24T02:00:00Z', quality: '2160p', origin: 'raw'}] : []})),
   }}}
 }
 let PageComponent = AppPage
