@@ -5,7 +5,7 @@ import Config from '../src/Config.vue'
 const config = ref({enabled: true, pansou_url: 'https://pansou.tiandechi.com', pansou_token: ''})
 const configuring = ref(false)
 const api = {
-  async get() {return {success: true, message: '', data: {...config.value, version: '0.2.0', token_set: false, config_error: ''}}},
+  async get() {return {success: true, message: '', data: {...config.value, version: '0.2.1', token_set: false, config_error: ''}}},
   async post(_path: string, request: {keyword: string}) {return {success: true, message: '', data: {
     keyword: request.keyword, raw_115: 3, duplicates: 1, filtered: 0, truncated: false,
     items: [1,2].map(n => ({id: 'preview'+n, title: `${request.keyword} (2026) S01E0${n} 4K WEB-DL`,

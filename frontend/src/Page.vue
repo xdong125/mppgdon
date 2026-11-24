@@ -8,6 +8,12 @@ const toast = inject<{success(message: string): unknown} | null>('moviepilot:toa
 const keyword = ref(''), year = ref(''), resolution = ref('all')
 const status = ref<Status | null>(null), results = ref<Results | null>(null)
 const busy = ref(false), error = ref(''), notice = ref(''), searched = ref(false)
+const expandedItemId = ref<string | null>(null)
+
+function subtitle(item: Item) {
+  return [item.password_conflict ? '提取码冲突' : '', item.quality, item.episode,
+    item.collection ? '115 合集' : '115 分享', item.source, item.published].filter(Boolean).join(' · ')
+}
 
 async function loadStatus() {
   try {
@@ -23,7 +29,7 @@ async function search() {
   error.value = ''; notice.value = ''
   if (!keyword.value.trim()) {error.value = '请输入影视名称。'; return}
   if (year.value && !/^(19|20)\d{2}$/.test(year.value)) {error.value = '年份请输入四位数字。'; return}
-  busy.value = true; results.value = null; searched.value = false
+  busy.value = true; results.value = null; searched.value = false; expandedItemId.value = null
   try {
     const response = await props.api.post(`plugin/${props.pluginId}/search`, {
       keyword: keyword.value.trim(), year: year.value, resolution: resolution.value,
@@ -40,7 +46,7 @@ async function copy(item: Item) {
   try {
     await navigator.clipboard.writeText(`${item.title}\n${item.url}${item.password ? '\n提取码：' + item.password : ''}`)
     notice.value = '分享信息已复制。'; toast?.success(notice.value)
-  } catch { notice.value = '浏览器无法自动复制，请展开“分享信息”后手动选择复制。' }
+  } catch { notice.value = '浏览器无法自动复制，请点击“详情”后手动复制。' }
 }
 
 onMounted(loadStatus)
@@ -66,15 +72,28 @@ onMounted(loadStatus)
     <template v-if="results">
       <p class="mp-summary">找到 {{ results.items.length }} 个分享 · 合并 {{ results.duplicates }} 次重复 · 过滤 {{ results.filtered }} 条不匹配</p>
       <p v-if="results.truncated" class="mp-alert">结果较多，仅展示前 200 条。可添加年份或清晰度缩小范围。</p>
-      <div class="mp-grid">
-        <article v-for="item in results.items" :key="item.id" class="mp-card">
-          <span class="mp-tag">115 · {{ item.collection ? '合集' : '分享资源' }}</span>
-          <h3>{{ item.title }}</h3>
-          <p>{{ item.quality }} · {{ item.episode }}</p>
-          <p class="mp-muted">来源：{{ item.source }} <span v-if="item.published"> · {{ item.published }}</span></p>
-          <p v-if="item.password_conflict" class="mp-warning">同一分享存在不同提取码，请手动核对，已禁用快捷操作。</p>
-          <details><summary>分享信息</summary><p class="mp-share">{{ item.url }}</p><p>提取码：{{ item.password || '未提供' }}</p></details>
-          <footer><button type="button" :disabled="item.password_conflict" @click="copy(item)">复制分享</button><a v-if="!item.password_conflict" :href="item.url" target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">打开分享 ↗</a></footer>
+      <div class="mp-list">
+        <article v-for="item in results.items" :key="item.id" class="mp-row">
+          <div class="mp-row-bar">
+            <div class="mp-row-text">
+              <h3 :title="item.title">{{ item.title }}</h3>
+              <p :title="subtitle(item)">{{ subtitle(item) }}</p>
+            </div>
+            <div class="mp-row-actions">
+              <button type="button" title="分享信息" aria-label="分享信息"
+                :aria-expanded="expandedItemId === item.id"
+                @click="expandedItemId = expandedItemId === item.id ? null : item.id">详情</button>
+              <button type="button" title="复制分享" aria-label="复制分享" :disabled="item.password_conflict" @click="copy(item)">复制</button>
+              <a v-if="!item.password_conflict" title="打开分享" aria-label="打开分享" :href="item.url"
+                target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">打开 ↗</a>
+            </div>
+          </div>
+          <div v-if="expandedItemId === item.id" class="mp-details">
+            <p>{{ item.title }}</p>
+            <p v-if="item.password_conflict" class="mp-warning">同一分享存在不同提取码，请手动核对，已禁用快捷操作。</p>
+            <p class="mp-share">{{ item.url }}</p>
+            <p>提取码：{{ item.password || '未提供' }}</p>
+          </div>
         </article>
       </div>
     </template>
@@ -84,5 +103,17 @@ onMounted(loadStatus)
 </template>
 
 <style scoped>
-.mp-search{padding:24px;color:rgb(var(--v-theme-on-surface,35,42,56));font-family:inherit}.mp-heading,.mp-actions,.mp-card footer{display:flex;justify-content:space-between;align-items:center;gap:12px}.mp-heading{align-items:flex-start;margin-bottom:24px}.mp-heading h2{font-size:28px;margin:0 0 6px}.mp-heading p{margin:0}.mp-eyebrow{font-size:11px;letter-spacing:2px;opacity:.65;padding-bottom:8px}.mp-form{display:grid;grid-template-columns:minmax(180px,1fr) 120px 150px auto;gap:12px;align-items:end}.mp-form label{font-size:13px;display:grid;gap:7px}.mp-search input,.mp-search select{width:100%;padding:11px 12px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.23);border-radius:8px;background:rgb(var(--v-theme-surface,255,255,255));color:inherit;font:inherit}.mp-search button,.mp-search a{font:inherit;font-size:13px;padding:10px 14px;border-radius:8px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.2);background:transparent;color:inherit;cursor:pointer;text-decoration:none}.mp-search button:disabled{opacity:.45;cursor:default}.mp-search .mp-primary{background:rgb(var(--v-theme-primary,75,102,225));color:white;border-color:transparent;min-height:43px}.mp-muted{font-size:12px;opacity:.65;overflow-wrap:anywhere}.mp-summary{font-size:13px;margin:24px 0 14px}.mp-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:16px}.mp-card{padding:20px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.15);border-radius:12px;min-width:0;background:rgba(var(--v-theme-surface,255,255,255),.65)}.mp-card h3{font-size:16px;line-height:1.6;overflow-wrap:anywhere}.mp-card p{font-size:13px}.mp-tag{font-size:11px;opacity:.7}.mp-card footer{margin-top:22px;flex-wrap:wrap}.mp-card summary{font-size:13px;cursor:pointer}.mp-share{word-break:break-all;user-select:text}.mp-empty{text-align:center;padding:48px 12px;opacity:.65}.mp-alert{padding:12px 16px;margin:14px 0;background:rgba(80,120,200,.1);border-radius:8px;font-size:13px}.mp-error{background:rgba(200,60,60,.12)}.mp-warning{color:#b7791f}.mp-search input:focus,.mp-search select:focus{outline:2px solid rgb(var(--v-theme-primary,75,102,225));outline-offset:2px}@media(max-width:650px){.mp-search{padding:16px}.mp-form{grid-template-columns:1fr 1fr}.mp-form label:first-child{grid-column:1/-1}.mp-primary{grid-column:1/-1}.mp-heading{flex-wrap:wrap}}
+.mp-search{padding:24px;color:rgb(var(--v-theme-on-surface,35,42,56));font-family:inherit}.mp-heading,.mp-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}.mp-heading{align-items:flex-start;margin-bottom:24px}.mp-heading h2{font-size:28px;margin:0 0 6px}.mp-heading p{margin:0}.mp-eyebrow{font-size:11px;letter-spacing:2px;opacity:.65;padding-bottom:8px}.mp-form{display:grid;grid-template-columns:minmax(180px,1fr) 120px 150px auto;gap:12px;align-items:end}.mp-form label{font-size:13px;display:grid;gap:7px}.mp-search input,.mp-search select{width:100%;padding:11px 12px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.23);border-radius:8px;background:rgb(var(--v-theme-surface,255,255,255));color:inherit;font:inherit}.mp-search button,.mp-search a{font:inherit;font-size:13px;padding:10px 14px;border-radius:8px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.2);background:transparent;color:inherit;cursor:pointer;text-decoration:none}.mp-search button:disabled{opacity:.45;cursor:default}.mp-search .mp-primary{background:rgb(var(--v-theme-primary,75,102,225));color:white;border-color:transparent;min-height:43px}.mp-muted{font-size:12px;opacity:.65;overflow-wrap:anywhere}.mp-summary{font-size:13px;margin:24px 0 14px}.mp-share{word-break:break-all;user-select:text}.mp-empty{text-align:center;padding:48px 12px;opacity:.65}.mp-alert{padding:12px 16px;margin:14px 0;background:rgba(80,120,200,.1);border-radius:8px;font-size:13px}.mp-error{background:rgba(200,60,60,.12)}.mp-warning{color:#b7791f}.mp-search input:focus,.mp-search select:focus{outline:2px solid rgb(var(--v-theme-primary,75,102,225));outline-offset:2px}@media(max-width:650px){.mp-search{padding:16px}.mp-form{grid-template-columns:1fr 1fr}.mp-form label:first-child{grid-column:1/-1}.mp-primary{grid-column:1/-1}.mp-heading{flex-wrap:wrap}}
+
+.mp-list{display:grid;gap:3px}
+.mp-row{min-width:0;border-radius:6px;box-shadow:inset 0 0 0 1px rgba(var(--v-theme-on-surface,35,42,56),.14)}
+.mp-row-bar{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px;height:48px;padding:0 8px 0 10px}
+.mp-row-text h3,.mp-row-text p{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mp-row-text h3{font-size:14px;line-height:18px;font-weight:600}
+.mp-row-text p{font-size:12px;line-height:16px;opacity:.7}
+.mp-row-actions{display:flex;gap:4px;align-items:center;white-space:nowrap}
+.mp-row-actions button,.mp-row-actions a{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 6px;line-height:1;border-radius:5px;font-size:12px}
+.mp-row-actions button:not(:disabled):hover,.mp-row-actions a:hover,.mp-row-actions [aria-expanded="true"]{background:rgba(var(--v-theme-on-surface,35,42,56),.08)}
+.mp-details{padding:7px 10px 9px;border-top:1px solid rgba(var(--v-theme-on-surface,35,42,56),.14);font-size:12px;overflow-wrap:anywhere}
+.mp-details p{margin:2px 0}
 </style>
