@@ -4,11 +4,14 @@ import type { Api, DuplicateRecord, Envelope, Item, Results, Status, SyncResult 
 
 const props = defineProps<{
   api: Api; pluginId: string; sourcePluginId?: string; embedded?: boolean
-  initialMedia?: {title: string; year: string}
+  initialMedia?: {title: string; year: string; kind?: 'movie' | 'tv'; tmdb_id?: number}
 }>()
 const emit = defineEmits(['close', 'switch', 'action'])
 const toast = inject<{success(message: string): unknown} | null>('moviepilot:toast', null)
-const keyword = ref(props.initialMedia?.title ?? ''), year = ref(props.initialMedia?.year ?? ''), resolution = ref('all')
+const keyword = ref(props.initialMedia?.title ?? ''), year = ref(props.initialMedia?.year ?? '')
+const mediaType = ref(props.initialMedia?.kind ?? ''), season = ref('')
+const qualityOptions = [['original', '原盘'], ['2160p', '4K'], ['1440p', '2K'], ['1080p', '1080/1080p'], ['720p', '720'], ['preview', '抢先版（枪版/含广告）']]
+const qualities = ref(['2160p', '1440p', '1080p'])
 const status = ref<Status | null>(null), results = ref<Results | null>(null)
 const busy = ref(false), error = ref(''), notice = ref(''), searched = ref(false)
 const expandedItemId = ref<string | null>(null)
@@ -42,12 +45,16 @@ async function search() {
   error.value = ''; notice.value = ''
   if (!keyword.value.trim()) {error.value = '请输入影视名称。'; return}
   if (year.value && !/^(19|20)\d{2}$/.test(year.value)) {error.value = '年份请输入四位数字。'; return}
+  if (!qualities.value.length) {error.value = '请至少选择一种清晰度。'; return}
+  if (season.value && !/^\d{1,3}$/.test(season.value)) {error.value = '季号请输入 0～999。'; return}
   busy.value = true; results.value = null; searched.value = false; expandedItemId.value = null
   showDuplicates.value = false
   syncNotices.value = {}
   try {
     const response = await props.api.post(`plugin/${props.pluginId}/search`, {
-      keyword: keyword.value.trim(), year: year.value, resolution: resolution.value,
+      keyword: keyword.value.trim(), year: year.value, qualities: qualities.value,
+      media_type: mediaType.value, season: season.value && mediaType.value !== 'movie' ? Number(season.value) : null,
+      tmdb_id: keyword.value.trim() === props.initialMedia?.title && year.value === props.initialMedia.year && mediaType.value === props.initialMedia.kind ? props.initialMedia.tmdb_id ?? null : null,
     }, {timeout: 65000, feedback: 'silent'}) as Envelope<Results>
     if (!response.success || !response.data) {error.value = response.message || '搜索失败，请重试。'; return}
     results.value = response.data; searched.value = true
@@ -106,13 +113,17 @@ onMounted(initialize)
       <div class="mp-actions"><button type="button" @click="emit('switch')">连接设置</button><button type="button" @click="emit('close')">关闭</button></div>
     </header>
     <div v-if="status && !status.enabled" class="mp-alert" role="status">插件尚未启用，请在连接设置中启用并保存。</div>
-    <form class="mp-form" @submit.prevent="search">
+    <form class="mp-form" :class="{'mp-movie-form': mediaType === 'movie'}" @submit.prevent="search">
       <label>影视名称<input v-model="keyword" name="keyword" maxlength="120" placeholder="例如：无声的回响" :disabled="busy" /></label>
       <label>年份（可选）<input v-model="year" name="year" maxlength="4" inputmode="numeric" placeholder="2026" :disabled="busy" /></label>
-      <label>清晰度<select v-model="resolution" name="resolution" :disabled="busy"><option value="all">全部</option><option value="2160p">4K / 2160p</option><option value="1080p">1080p</option></select></label>
+      <label>类型<select v-model="mediaType" name="media_type" :disabled="busy"><option value="">自动匹配媒体库</option><option value="movie">电影</option><option value="tv">电视剧</option></select></label>
+      <label v-if="mediaType !== 'movie'">季号（可选）<input v-model="season" name="season" maxlength="3" inputmode="numeric" placeholder="自动识别" :disabled="busy" /></label>
       <button class="mp-primary" type="submit" :disabled="busy || !!syncingId || !status?.enabled || !!status?.config_error">{{ busy ? '搜索中…' : '搜索资源' }}</button>
     </form>
-    <p class="mp-muted">仅搜索 115 · 标题中的季集、画质和链接有效性待自行核实</p>
+    <div class="mp-quality-options" role="group" aria-label="清晰度筛选">
+      <span class="mp-muted" title="仅搜索115；画质和季集来自标题，实际内容及链接有效性请自行核实">清晰度</span>
+      <label v-for="[value, label] in qualityOptions" :key="value"><input v-model="qualities" type="checkbox" :value="value" :disabled="busy" />{{ label }}</label>
+    </div>
     <div v-if="error" class="mp-alert mp-error" role="alert">{{ error }} <button v-if="!status" type="button" @click="initialize">重新连接</button></div>
     <div v-if="notice" class="mp-alert" role="status">{{ notice }}</div>
     <div v-if="busy" class="mp-empty" role="status">正在从 PanSou 搜索，请稍候…</div>
@@ -131,11 +142,11 @@ onMounted(initialize)
           <div class="mp-row-bar">
             <div class="mp-row-text">
               <h3 :title="item.title">{{ item.title }}</h3>
-              <p :title="subtitle(item)">{{ subtitle(item) }}</p>
+              <p :title="item.sync_target ? `同步至：${item.sync_target.cms_path} · ${subtitle(item)}` : item.sync_error || subtitle(item)">{{ item.sync_target ? `同步至：${item.sync_target.cms_path}` : item.sync_error || subtitle(item) }}</p>
             </div>
             <div class="mp-row-actions">
               <button type="button" class="mp-sync" :disabled="!!syncingId || !canSync(item)"
-                :title="status?.sync_error || (status?.sync_mode === 'unavailable' ? '请先保存 CMS 分享同步设置' : undefined)"
+                :title="item.sync_error || status?.sync_error || (status?.sync_mode === 'unavailable' ? '请先保存 CMS 分享同步设置' : item.sync_target?.cms_path)"
                 @click="syncShare(item)">{{ syncingId === item.id ? '提交中…' : status?.sync_mode === 'dry_run' ? '演练同步' : '分享同步' }}</button>
               <button type="button" title="分享信息" aria-label="分享信息"
                 :aria-expanded="expandedItemId === item.id"
@@ -148,6 +159,7 @@ onMounted(initialize)
           <p v-if="syncNotices[item.id]" class="mp-sync-notice" role="status">{{ syncNotices[item.id].message }}</p>
           <div v-if="expandedItemId === item.id" class="mp-details">
             <p>{{ item.title }}</p>
+            <template v-if="item.sync_target"><p>MP 目标：{{ item.sync_target.mp_path }}</p><p>CMS 目标：{{ item.sync_target.cms_path }} · {{ item.sync_target.reason }}</p></template>
             <p v-if="item.password_conflict" class="mp-warning">同一分享存在不同提取码，请手动核对，已禁用快捷操作。</p>
             <p class="mp-share">{{ item.url }}</p>
             <p>提取码：{{ item.password || '未提供' }}</p>
@@ -170,6 +182,12 @@ onMounted(initialize)
 .mp-search{padding:24px;color:rgb(var(--v-theme-on-surface,35,42,56));font-family:inherit}.mp-heading,.mp-actions{display:flex;justify-content:space-between;align-items:center;gap:12px}.mp-heading{align-items:flex-start;margin-bottom:24px}.mp-heading h2{font-size:28px;margin:0 0 6px}.mp-heading p{margin:0}.mp-eyebrow{font-size:11px;letter-spacing:2px;opacity:.65;padding-bottom:8px}.mp-form{display:grid;grid-template-columns:minmax(180px,1fr) 120px 150px auto;gap:12px;align-items:end}.mp-form label{font-size:13px;display:grid;gap:7px}.mp-search input,.mp-search select{width:100%;padding:11px 12px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.23);border-radius:8px;background:rgb(var(--v-theme-surface,255,255,255));color:inherit;font:inherit}.mp-search button,.mp-search a{font:inherit;font-size:13px;padding:10px 14px;border-radius:8px;border:1px solid rgba(var(--v-theme-on-surface,35,42,56),.2);background:transparent;color:inherit;cursor:pointer;text-decoration:none}.mp-search button:disabled{opacity:.45;cursor:default}.mp-search .mp-primary{background:rgb(var(--v-theme-primary,75,102,225));color:white;border-color:transparent;min-height:43px}.mp-muted{font-size:12px;opacity:.65;overflow-wrap:anywhere}.mp-summary{font-size:13px;margin:24px 0 14px}.mp-share{word-break:break-all;user-select:text}.mp-empty{text-align:center;padding:48px 12px;opacity:.65}.mp-alert{padding:12px 16px;margin:14px 0;background:rgba(80,120,200,.1);border-radius:8px;font-size:13px}.mp-error{background:rgba(200,60,60,.12)}.mp-warning{color:#b7791f}.mp-search input:focus,.mp-search select:focus{outline:2px solid rgb(var(--v-theme-primary,75,102,225));outline-offset:2px}@media(max-width:650px){.mp-search{padding:16px}.mp-form{grid-template-columns:1fr 1fr}.mp-form label:first-child{grid-column:1/-1}.mp-primary{grid-column:1/-1}.mp-heading{flex-wrap:wrap}}
 
 .mp-list{display:grid;gap:3px}
+.mp-search .mp-form{grid-template-columns:minmax(130px,1fr) 100px 135px 100px auto}
+.mp-search .mp-movie-form{grid-template-columns:minmax(130px,1fr) 100px 135px auto}
+.mp-quality-options{display:flex;align-items:center;gap:8px 16px;overflow-x:auto;padding:10px 0 2px;white-space:nowrap;font-size:13px}
+.mp-quality-options label{display:inline-flex;align-items:center;gap:5px;flex:none;cursor:pointer}
+.mp-search .mp-quality-options input{width:auto;margin:0;padding:0;accent-color:rgb(var(--v-theme-primary,75,102,225))}
+@media(max-width:650px){.mp-search .mp-form{grid-template-columns:1fr 1fr}.mp-search .mp-form label:first-child{grid-column:1/-1}}
 .mp-summary-bar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:20px 0 10px}
 .mp-summary-bar .mp-summary{margin:0}
 .mp-summary-bar .mp-duplicates-toggle{padding:4px 8px;border-radius:5px;font-size:12px}

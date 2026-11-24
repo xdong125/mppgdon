@@ -6,7 +6,7 @@
 - 推送前检查 git status、diff、版本一致性并运行相关测试；只提交本任务文件。
 - 修改插件实现时同步 plugin_version、市场索引 version 和 history。纯文档反馈更新无需提高插件版本。
 - 不提交凭据、本地配置、运行数据或 __pycache__。
-- 当前入口与验证边界见 README.md、TEST_REPORT.md。v0.5.0 第一阶段媒体库索引约定见 [LIBRARY_INDEX.md](LIBRARY_INDEX.md)，只读扫描不触发刮削或自动修改同步目录。
+- 当前入口与验证边界见 README.md、TEST_REPORT.md，媒体库与自动目录约定见 [LIBRARY_INDEX.md](LIBRARY_INDEX.md)。v0.6.0 根据根目录、索引和身份/季号自动生成同步目标，移除固定路径；真实提交才允许创建目标目录，不触发刮削。
 - 回归范围按实际改动收敛；纯界面调整只做相关前端验证和发布门禁，不重复运行无关后端用例或真实环境测试。
 
 - 当前ID继续使用MppgdonTest以原位更新，展示名为MPPGDON网盘搜索。Vue页面源码frontend/，完整构建产物提交plugins.v3/mppgdontest/dist/assets；必须通过官方联邦CSS门禁。

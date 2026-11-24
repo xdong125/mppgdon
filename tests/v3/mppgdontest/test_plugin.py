@@ -260,22 +260,35 @@ class PluginTests(unittest.TestCase):
 
 class ShareSyncTests(unittest.TestCase):
     def setUp(self):
-        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory(dir=ROOT / 'release-out'))).resolve()
+        self.data = self.directory / 'data'
+        self.tv = self.directory / '电视剧'
+        self.movies = self.directory / '电影'
+        for path in (self.data, self.tv, self.movies):
+            path.mkdir()
         self.settings = {"cms_url": "https://CMS.example:443/", "cms_login_token": "Bearer fake-login-token",
-                         "cms_sync_path": "/media/测试影视", "cms_sync_cid": "000", "cms_sync_live": True}
+                         "cms_sync_path": "/media/旧固定目录", "cms_sync_cid": "000", "cms_sync_live": True,
+                         "library_movie_root": str(self.movies), "library_tv_root": str(self.tv),
+                         "library_path_mapping": str(self.directory) + '#/media'}
+        self.context = SEARCH.SearchRequest(keyword='测试剧', year='2026', media_type='tv')
+        self.library_config = LIBRARY.LibraryConfig.from_settings(self.settings)
+        self.library = LIBRARY.LibraryIndex(lambda: self.data)
+        self.resolver = SYNC.TargetResolver(self.library_config, self.library)
 
     def prepare(self, **overrides):
-        sync = SYNC.ShareSync(SYNC.SyncConfig.from_settings(dict(self.settings, **overrides)), lambda: self.directory)
+        sync = SYNC.ShareSync(SYNC.SyncConfig.from_settings(dict(self.settings, **overrides)), lambda: self.data, self.resolver)
         items = SEARCH.normalize_results(fixture(), SEARCH.SearchRequest(keyword="测试剧")).items
         data = SEARCH.SearchData(keyword="测试剧", items=items, raw_115=3, duplicates=0, filtered=0)
         data.items[1].password_conflict = True
-        sync.add_tickets(data)
+        sync.add_tickets(data, self.context)
         self.assertIsNone(data.items[1].sync_ticket)
         return sync, data.items[0]
 
     def test_share_sync_dry_run_and_invalid_config(self):
+        movie = self.resolver.plan(SEARCH.SearchRequest(keyword='新电影', year='2026', media_type='movie'), ['新电影 4K'])
+        self.assertEqual('/media/电影/新电影 (2026)', movie.cms_path)
         with self.assertRaises(SEARCH.SearchError):
-            SYNC.SyncConfig.from_settings(dict(self.settings, cms_sync_path="/media/../etc"))
+            self.resolver.plan(self.context, ['测试剧 S01-S08'])
         with self.assertRaises(ValidationError):
             SYNC.SyncRequest(ticket="x" * 32, local_path="/media/other")
         sync, item = self.prepare(cms_sync_live=False)
@@ -283,7 +296,8 @@ class ShareSyncTests(unittest.TestCase):
             self.assertEqual("not_sent", sync.submit("x" * 32)[0].status)
             self.assertEqual("dry_run", sync.submit(item.sync_ticket)[0].status)
             request.assert_not_called()
-        self.assertEqual([], list(self.directory.iterdir()))
+        self.assertFalse((self.tv / '测试剧').exists())
+        self.assertFalse((self.movies / '新电影 (2026)').exists())
 
     def test_share_sync_payload_and_durable_unknown(self):
         sync, item = self.prepare()
@@ -291,19 +305,27 @@ class ShareSyncTests(unittest.TestCase):
             self.assertEqual("unknown", sync.submit(item.sync_ticket)[0].status)
             self.assertEqual("/api/config/share_115_sync", request.call_args_list[0].args[1])
             self.assertEqual("/api/sync/share115", request.call_args.args[1])
-            self.assertEqual({"share_code": item.id, "receive_code": item.password, "cid": "0", "local_path": "/media/测试影视"},
+            self.assertEqual({"share_code": item.id, "receive_code": item.password, "cid": "0", "local_path": "/media/电视剧/测试剧/S01"},
                              request.call_args.kwargs["body"])
             self.assertEqual("fake-login-token", request.call_args.args[0].token)
         restarted, item = self.prepare()
         with patch.object(SYNC, "_request") as request:
             self.assertEqual("unknown", restarted.submit(item.sync_ticket)[0].status)
             request.assert_not_called()
-        journal = (self.directory / "cms-share-sync.sqlite3").read_bytes()
+        self.assertTrue((self.tv / '测试剧' / 'S01').is_dir())
+        journal = (self.data / "cms-share-sync.sqlite3").read_bytes()
         for value in (b"fake-login-token", item.id.encode(), b"/media/"):
             self.assertNotIn(value, journal)
 
     def test_share_sync_preflight_rejection_and_accepted_idempotency(self):
+        existing = self.tv / '已有剧名 (2026)'
+        (existing / 'S1').mkdir(parents=True)
+        (existing / 'tvshow.nfo').write_text('<tvshow><title>测试剧</title><year>2026</year><uniqueid type="tmdb">123</uniqueid></tvshow>', encoding='utf-8')
+        self.library.start(self.library_config)
+        self.library._thread.join(5)
+        self.context.tmdb_id = 123
         sync, item = self.prepare()
+        self.assertEqual('/media/电视剧/已有剧名 (2026)/S1', item.sync_target.cms_path)
         with patch.object(SYNC, "_request", return_value=(401, {})) as request:
             self.assertEqual("not_sent", sync.submit(item.sync_ticket)[0].status)
             self.assertEqual(1, request.call_count)
@@ -313,6 +335,18 @@ class ShareSyncTests(unittest.TestCase):
             self.assertEqual("accepted", sync.submit(item.sync_ticket)[0].status)
             self.assertEqual("accepted", sync.submit(item.sync_ticket)[0].status)
             self.assertEqual(4, request.call_count)
+
+
+class QualitySelectionTests(unittest.TestCase):
+    def test_quality_multiselect_defaults_and_explicit_preview(self):
+        tags = ['4K', '2K', '1080p', '720p', '4K 原盘', '4K 枪版', '1080p 含广告', '未知', '4K 无广告']
+        payload = {'merged_by_type': {'115': [{'note': f'测试片 {tag}', 'url': f'https://115.com/s/fixture{n}'} for n, tag in enumerate(tags)]}}
+        standard = SEARCH.normalize_results(payload, SEARCH.SearchRequest(keyword='测试片', qualities=['2160p','1440p','1080p']))
+        self.assertEqual(4, len(standard.items))
+        extra = SEARCH.normalize_results(payload, SEARCH.SearchRequest(keyword='测试片', qualities=['original','preview']))
+        self.assertEqual(3, len(extra.items))
+        self.assertTrue(any('原盘' in item.title for item in extra.items))
+        self.assertTrue(any('枪版' in item.title for item in extra.items))
 
 
 if __name__ == '__main__':

@@ -382,3 +382,13 @@ class LibraryIndex:
                 entry.cms_path = config.cms_path(entry.path)
                 view.items.append(entry)
         return view
+
+    def routing_entries(self, config):
+        """Return only identity fields required to resolve work/season directories."""
+        roots = [root for _, root in config.roots]
+        if not roots:
+            return []
+        with self.database() as db:
+            scope = ','.join('?' for _ in roots)
+            return [LibraryEntry.model_validate_json(row['detail']) for row in db.execute(
+                f"SELECT detail FROM entries WHERE present=1 AND entry_type IN ('directory','media') AND root IN ({scope})", roots)]

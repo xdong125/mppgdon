@@ -16,5 +16,7 @@ export interface Item {
   quality: string; episode: string; collection: boolean; password_conflict: boolean
   duplicate_records?: DuplicateRecord[]
   sync_ticket?: string | null
+  sync_target?: {mp_path: string; cms_path: string; kind: 'movie' | 'tv'; season: number | null; reason: string} | null
+  sync_error?: string
 }
 export interface Results {keyword: string; items: Item[]; raw_115: number; duplicates: number; filtered: number; truncated: boolean}

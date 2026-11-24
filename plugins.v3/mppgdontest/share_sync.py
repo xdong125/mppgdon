@@ -19,7 +19,8 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .search import SearchData, SearchError
+from .search import SearchData, SearchError, SearchRequest, SyncTarget
+from .routing import TargetResolver
 
 _SYNC_LOCK = threading.Lock()
 _REJECTED = {400, 401, 403, 404, 405, 422, 429}
@@ -41,15 +42,13 @@ class SyncConfig:
     base: str
     token: str = field(repr=False)
     cid: str
-    path: str
     live: bool
 
     @classmethod
     def from_settings(cls, values: dict) -> "SyncConfig | None":
         raw_base = str(values.get("cms_url") or "").strip()
-        path = str(values.get("cms_sync_path") or "").strip().rstrip("/")
         live = values.get("cms_sync_live") is True
-        if not raw_base and not path and not live:
+        if not raw_base and not live:
             return None
         try:
             parts = urlsplit(raw_base)
@@ -73,10 +72,7 @@ class SyncConfig:
         cid = str(values.get("cms_sync_cid", "0")).strip()
         if not re.fullmatch(r"[0-9]{1,20}", cid):
             raise SearchError("分享目录 CID 必须是数字，0 表示整个分享。")
-        if (not 8 <= len(path) <= 512 or not path.startswith("/media/") or "\\" in path
-                or any(ord(ch) < 32 for ch in path) or any(part in (".", "..", "") for part in path[1:].split("/"))):
-            raise SearchError("请填写 CMS 容器内 /media/ 下的具体 STRM 目录。")
-        return cls(f"{parts.scheme}://{host}", token, str(int(cid)), path, live)
+        return cls(f"{parts.scheme}://{host}", token, str(int(cid)), live)
 
 
 @dataclass(frozen=True)
@@ -84,26 +80,44 @@ class Candidate:
     share_code: str
     receive_code: str = field(repr=False)
     expires: float
+    context: SearchRequest
+    titles: tuple[str, ...]
+    target: SyncTarget
 
 
 class ShareSync:
-    def __init__(self, config: SyncConfig, data_path: Callable[[], Path]):
+    def __init__(self, config: SyncConfig, data_path: Callable[[], Path], resolver: TargetResolver):
         self.config = config
         self._data_path = data_path
         self._tickets: OrderedDict[str, Candidate] = OrderedDict()
         self._ticket_lock = threading.Lock()
+        self.resolver = resolver
 
-    def add_tickets(self, result: SearchData) -> None:
+    def add_tickets(self, result: SearchData, context: SearchRequest) -> None:
         now = time.monotonic()
+        try:
+            work = self.resolver.work(context)
+        except (SearchError, OSError, sqlite3.Error) as error:
+            message = str(error) if isinstance(error, SearchError) else '无法匹配媒体目录，请检查挂载及索引。'
+            for item in result.items:
+                item.sync_error = message
+            return
         with self._ticket_lock:
             while self._tickets and next(iter(self._tickets.values())).expires <= now:
                 self._tickets.popitem(last=False)
             for item in result.items:
                 if item.password_conflict:
                     continue
+                titles = tuple([item.title, *(row.title for row in item.duplicate_records)])
+                try:
+                    target = self.resolver.plan(context, titles, work)
+                except (SearchError, OSError) as error:
+                    item.sync_error = str(error) if isinstance(error, SearchError) else '目标目录不可用，请检查 MP 挂载。'
+                    continue
                 ticket = secrets.token_urlsafe(24)
-                self._tickets[ticket] = Candidate(item.id, item.password, now + _TICKET_TTL)
+                self._tickets[ticket] = Candidate(item.id, item.password, now + _TICKET_TTL, context.model_copy(deep=True), titles, target)
                 item.sync_ticket = ticket
+                item.sync_target = target
             while len(self._tickets) > _MAX_TICKETS:
                 self._tickets.popitem(last=False)
 
@@ -112,18 +126,24 @@ class ShareSync:
             candidate = self._tickets.get(ticket)
         if candidate is None or candidate.expires <= time.monotonic():
             return _result("not_sent", "搜索记录已过期或设置已更新，请重新搜索后提交。")
-        if not self.config.live:
-            return _result("dry_run", "演练完成，未请求 CMS，也未生成 STRM。")
         if not _SYNC_LOCK.acquire(blocking=False):
             return _result("not_sent", "已有分享同步正在提交，请稍后手动点击。")
         try:
+            try:
+                current = self.resolver.plan(candidate.context, candidate.titles)
+                if (current.mp_path, current.cms_path) != (candidate.target.mp_path, candidate.target.cms_path):
+                    return _result('not_sent', '目标目录匹配已变化，请重新搜索核对后提交。')
+            except (SearchError, OSError, sqlite3.Error):
+                return _result('not_sent', '目标目录无法复核，请检查挂载和索引后重新搜索。')
+            if not self.config.live:
+                return _result("dry_run", f"演练目标：{current.cms_path}；未创建目录或请求 CMS。")
             return self._submit_live(candidate)
         finally:
             _SYNC_LOCK.release()
 
     def _submit_live(self, candidate: Candidate) -> tuple[SyncResult, str]:
         config = self.config
-        key = hashlib.sha256(json.dumps([config.base, config.path, config.cid, candidate.share_code]).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps([config.base, candidate.target.cms_path, config.cid, candidate.share_code]).encode()).hexdigest()
         try:
             db_path = self._data_path() / "cms-share-sync.sqlite3"
             with closing(sqlite3.connect(db_path, timeout=3)) as db:
@@ -144,6 +164,12 @@ class ShareSync:
         if not 200 <= status < 300 or _code(response) != 200 or not isinstance(response.get("data"), dict):
             return _result("not_sent", "CMS 只读验证未通过，未提交同步。请检查 CMS 地址、网页登录 Token 和版本。")
 
+        try:
+            work = self.resolver.work(candidate.context)
+            self.resolver.ensure_directory(work.root, Path(candidate.target.mp_path), create=True)
+        except (SearchError, OSError, sqlite3.Error):
+            return _result('not_sent', '无法创建或访问 MP 目标目录，请检查挂载和写权限；未请求 CMS 同步。')
+
         inserted = db.execute("INSERT OR IGNORE INTO dispatch VALUES (?, 'pending')", (key,)).rowcount
         db.commit()
         if not inserted:
@@ -151,7 +177,7 @@ class ShareSync:
 
         status, response = _request(config, "/api/sync/share115", timeout=25, body={
             "share_code": candidate.share_code, "receive_code": candidate.receive_code,
-            "cid": config.cid, "local_path": config.path,
+            "cid": config.cid, "local_path": candidate.target.cms_path,
         })
         code = _code(response)
         try:

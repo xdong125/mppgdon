@@ -16,7 +16,7 @@ const input = ref(''), keyword = ref('')
 const items = ref<Media[]>([]), page = ref(0), hasMore = ref(false)
 const busy = ref(false), error = ref('')
 const missingPosters = ref(new Set<string>())
-const selected = ref<{ title: string; year: string } | null>(null)
+const selected = ref<{ title: string; year: string; kind: 'movie' | 'tv'; tmdb_id?: number } | null>(null)
 const dialog = ref<HTMLDialogElement | null>(null)
 let activeRequest: AbortController | undefined
 
@@ -94,7 +94,8 @@ function clearKeyword() {
 
 async function searchShare(item: Media) {
   const year = String(item.year ?? '')
-  selected.value = { title: item.title, year: /^(19|20)\d{2}$/.test(year) ? year : '' }
+  selected.value = { title: item.title, year: /^(19|20)\d{2}$/.test(year) ? year : '',
+    kind: item.type === '电视剧' ? 'tv' : 'movie', tmdb_id: item.tmdb_id ?? undefined }
   await nextTick()
   dialog.value?.showModal()
 }

@@ -4,7 +4,7 @@ import { mapLibraryPath } from './libraryPaths'
 const props = defineProps<{initialConfig?: Record<string, unknown>}>()
 const emit = defineEmits(['save', 'close', 'switch'])
 const config = ref({enabled: false, pansou_url: 'https://pansou.tiandechi.com', pansou_token: '',
-  cms_url: '', cms_login_token: '', cms_sync_path: '', cms_sync_cid: '0', cms_sync_live: false,
+  cms_url: '', cms_login_token: '', cms_sync_cid: '0', cms_sync_live: false,
   library_movie_root: '', library_tv_root: '', library_path_mapping: '', ...props.initialConfig})
 const error = ref('')
 const testPath = ref('')
@@ -27,15 +27,11 @@ function save() {
       }
     }
   } catch (cause) { error.value = (cause as Error).message; return }
-  if (config.value.cms_url || config.value.cms_sync_path || config.value.cms_sync_live) {
+  if (config.value.cms_url || config.value.cms_sync_live) {
     try {
       const url = new URL(config.value.cms_url.trim())
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error()
     } catch { error.value = '请填写 CMS 根地址，不带路径、账号或查询参数。'; return }
-    const path = config.value.cms_sync_path.trim().replace(/\/+$/, '')
-    if (!path.startsWith('/media/') || path.length > 512 || path.includes('\\') || path.slice(1).split('/').some(part => ['', '.', '..'].includes(part))) {
-      error.value = '请填写 CMS 容器内 /media/ 下的具体 STRM 目录。'; return
-    }
     if (!/^[0-9]{1,20}$/.test(String(config.value.cms_sync_cid).trim())) {
       error.value = '分享目录 CID 必须是数字，0 表示整个分享。'; return
     }
@@ -44,7 +40,9 @@ function save() {
       error.value = '请填写 CMS 网页登录 Bearer Token，不要填写 Cookie。'; return
     }
   }
-  emit('save', {...config.value})
+  const saved: Record<string, unknown> = {...config.value}
+  delete saved.cms_sync_path
+  emit('save', saved)
 }
 </script>
 <template>
@@ -60,7 +58,6 @@ function save() {
         <legend>CMS 分享同步</legend>
         <label>CMS 根地址<input v-model="config.cms_url" type="url" placeholder="http://NAS地址:端口" /></label>
         <label>CMS 网页登录 Token<input v-model="config.cms_login_token" type="password" autocomplete="new-password" maxlength="8214" placeholder="Bearer Token，不是 Cookie 或 CMS_API_TOKEN" /></label>
-        <label>STRM 目录（CMS 容器内）<input v-model="config.cms_sync_path" type="text" maxlength="512" placeholder="/media/网盘影视" /></label>
         <label>分享目录 CID（0 = 整个分享）<input v-model="config.cms_sync_cid" type="text" inputmode="numeric" maxlength="20" /></label>
         <label class="mp-toggle"><input v-model="config.cms_sync_live" type="checkbox" /> 启用真实提交（未勾选时仅演练）</label>
       </fieldset>
@@ -71,7 +68,7 @@ function save() {
         <label>MP → CMS 路径替换<textarea v-model="config.library_path_mapping" rows="3" placeholder="/mnt/media#/media" /></label>
         <label>路径转换预览<input v-model="testPath" type="text" placeholder="输入 MP 中的完整路径" /></label>
         <output v-if="mappedPath" class="mapped-path">{{ mappedPath }}</output>
-        <p>留空替换规则表示路径不变。保存后进入「媒体库」手动扫描，MP 必须能读取这两个挂载目录。此阶段仅建立索引和预览映射；分享同步仍使用上方的固定 STRM 目录。</p>
+        <p>留空替换规则表示路径不变。分享同步自动复用已有影片目录；新电影按「片名 (年份)」、电视剧按「剧名/S01」建目录，再替换前缀提交 CMS。MP 与 CMS 路径必须对应同一份底层存储，真实提交时 MP 需有创建目录的权限。</p>
       </fieldset>
       <p v-if="error" role="alert">{{ error }}</p>
       <footer><button type="button" @click="emit('close')">关闭</button><button type="button" @click="emit('switch')">前往搜索</button><button class="mp-save" type="submit">保存配置</button></footer>

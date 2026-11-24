@@ -22,6 +22,10 @@ class SearchRequest(BaseModel):
     keyword: str = Field(min_length=1, max_length=120)
     year: str = Field(default="", pattern=r"^(?:(?:19|20)\d{2})?$")
     resolution: Literal["all", "2160p", "1080p"] = "all"
+    qualities: list[Literal['original', '2160p', '1440p', '1080p', '720p', 'preview']] | None = Field(default=None, min_length=1, max_length=6)
+    media_type: Literal["", "movie", "tv"] = ""
+    tmdb_id: int | None = Field(default=None, ge=1)
+    season: int | None = Field(default=None, ge=0, le=999)
 
     @field_validator("keyword")
     @classmethod
@@ -43,6 +47,14 @@ class DuplicateRecord(BaseModel):
     origin: Literal["grouped", "raw"]
 
 
+class SyncTarget(BaseModel):
+    mp_path: str
+    cms_path: str
+    kind: Literal['movie', 'tv']
+    season: int | None = None
+    reason: str
+
+
 class SearchItem(BaseModel):
     """校验后的分享卡片，标题标签不代表已核实文件内容。"""
 
@@ -58,6 +70,8 @@ class SearchItem(BaseModel):
     password_conflict: bool = False
     duplicate_records: list[DuplicateRecord] = Field(default_factory=list)
     sync_ticket: str | None = None
+    sync_target: SyncTarget | None = None
+    sync_error: str = ''
 
 
 class SearchData(BaseModel):
@@ -124,6 +138,23 @@ def compact(value: str) -> str:
     return "".join(c for c in unicodedata.normalize("NFKC", str(value)).casefold() if c.isalnum())
 
 
+def classify_quality(title: str) -> tuple[str, str]:
+    text = re.sub(r'无广告|去广告|无水印|去水印', '', title)
+    if re.search(r'抢先|枪版|含广告|广告|(?<![A-Z0-9])(?:HDCAM|HDTS|HDTC|CAM|TS|TC)(?![A-Z0-9])', text, re.I):
+        return 'preview', '抢先版 / 含广告'
+    if re.search(r'原盘|BDMV|BDISO|(?<![A-Z0-9])ISO(?![A-Z0-9])|COMPLETE[ ._-]*(?:UHD[ ._-]*)?BLU[ ._-]?RAY', title, re.I):
+        return 'original', '原盘'
+    if re.search(r'2160|(?<![A-Z0-9])4K(?![A-Z0-9])|\bUHD\b', title, re.I):
+        return '2160p', '2160p'
+    if re.search(r'1440|(?<![A-Z0-9])2K(?![A-Z0-9])', title, re.I):
+        return '1440p', '2K / 1440p'
+    if re.search(r'1080', title, re.I):
+        return '1080p', '1080p'
+    if re.search(r'720', title, re.I):
+        return '720p', '720p'
+    return 'unknown', '未知'
+
+
 def normalize_results(payload: dict, request: SearchRequest) -> SearchData:
     """合并原始与分组结果，按分享标识去重并检测提取码冲突。"""
     if not isinstance(payload, dict) or ("code" in payload and str(payload["code"]) not in {"0", "200"}):
@@ -153,7 +184,7 @@ def normalize_results(payload: dict, request: SearchRequest) -> SearchData:
         title = str(item.get("title", "")).strip()[:600]
         years = set(re.findall(r"(?<!\d)(?:19|20)\d{2}(?!\d)", title))
         if (needle not in compact(title) or (request.year and years and request.year not in years)
-                or re.search(r"预告|花絮|枪版|样片|(?<![A-Z])(?:CAM|TS)(?![A-Z])", title, re.I)):
+                or re.search(r"预告|花絮|样片", title, re.I)):
             filtered += 1
             continue
         try:
@@ -161,8 +192,9 @@ def normalize_results(payload: dict, request: SearchRequest) -> SearchData:
         except SearchError:
             filtered += 1
             continue
-        quality = "2160p" if re.search(r"2160|4K", title, re.I) else "1080p" if re.search(r"1080", title, re.I) else "未知"
-        if request.resolution != "all" and quality != request.resolution:
+        quality_group, quality = classify_quality(title)
+        if ((request.qualities is not None and quality_group not in request.qualities)
+                or request.qualities is None and request.resolution != 'all' and quality_group != request.resolution):
             filtered += 1
             continue
         source = str(item.get("source", "PanSou"))[:120]

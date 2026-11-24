@@ -44,7 +44,7 @@ describe('TheMovieDb 全页入口', () => {
       await flushPromises()
       expect(showModal).toHaveBeenCalledOnce()
       expect(post).toHaveBeenCalledExactlyOnceWith('plugin/MppgdonTestCopy/search', {
-        keyword: '野兽之心', year: '2026', resolution: 'all',
+        keyword: '野兽之心', year: '2026', qualities: ['2160p','1440p','1080p'], media_type:'movie', season:null, tmdb_id:12,
       }, expect.objectContaining({ feedback: 'silent' }))
       await wrapper.get('dialog').trigger('close')
       expect(wrapper.find('.poster-card').exists()).toBe(true)

@@ -17,7 +17,7 @@ describe('search page host contract', () => {
     await wrapper.get('input[name=keyword]').setValue('测试剧')
     await wrapper.get('form').trigger('submit')
     await flushPromises()
-    expect(api.post).toHaveBeenCalledWith('plugin/MppgdonTestCopy/search', {keyword: '测试剧', year: '', resolution: 'all'}, expect.objectContaining({feedback: 'silent', timeout: 65000}))
+    expect(api.post).toHaveBeenCalledWith('plugin/MppgdonTestCopy/search', expect.objectContaining({keyword: '测试剧', year: '', qualities:['2160p','1440p','1080p']}), expect.objectContaining({feedback: 'silent', timeout: 65000}))
     expect(wrapper.findAll('article')).toHaveLength(1)
     expect(wrapper.find('img').exists()).toBe(false)
     expect(wrapper.text()).toContain(item.title)
@@ -122,7 +122,7 @@ describe('configuration upgrade', () => {
     expect(wrapper.get('[role=alert]').text()).toContain('有效')
   })
   it('saves one set of sync settings and rejects a pasted CMS cookie', async () => {
-    const initialConfig = {cms_url: 'http://cms.example', cms_sync_path: '/media/测试', cms_sync_cid: '0',
+    const initialConfig = {cms_url: 'http://cms.example', cms_sync_cid: '0',
       cms_login_token: 'session=fake; other=bad', cms_sync_live: true}
     const wrapper = mount(Config, {props: {initialConfig}})
     await wrapper.get('form').trigger('submit')
@@ -131,5 +131,24 @@ describe('configuration upgrade', () => {
     await wrapper.get('.cms-settings input[type=password]').setValue('Bearer fake-login-token')
     await wrapper.get('form').trigger('submit')
     expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({...initialConfig, cms_login_token: 'Bearer fake-login-token'})
+  })
+  it('shows the requested quality checkboxes and removes the legacy fixed sync path', async () => {
+    const {wrapper, api} = setup(vi.fn().mockResolvedValue({success:true, data:{items:[], duplicates:0, filtered:0}, message:''}))
+    await flushPromises()
+    const checks = wrapper.findAll('.mp-quality-options input')
+    expect(checks).toHaveLength(6)
+    expect(checks.filter(input => (input.element as HTMLInputElement).checked).map(input => input.attributes('value'))).toEqual(['2160p','1440p','1080p'])
+    expect(wrapper.find('select[name=resolution]').exists()).toBe(false)
+    await wrapper.get('input[name=keyword]').setValue('测试片')
+    await wrapper.get('input[value=original]').setValue(true)
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(api.post).toHaveBeenCalledWith('plugin/MppgdonTestCopy/search', expect.objectContaining({qualities:['2160p','1440p','1080p','original']}), expect.anything())
+    const config = mount(Config, {props:{initialConfig:{cms_sync_path:'/media/旧目录'}}})
+    expect(config.text()).not.toContain('STRM 目录（CMS 容器内）')
+    await config.get('form').trigger('submit')
+    expect(config.emitted('save')?.[0]?.[0]).not.toHaveProperty('cms_sync_path')
+    wrapper.unmount()
+    config.unmount()
   })
 })

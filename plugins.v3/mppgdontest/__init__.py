@@ -15,6 +15,7 @@ from app.sdk.plugin import _PluginBase
 from .search import DEFAULT_URL, SearchData, SearchError, SearchRequest, StatusData, normalize_base, normalize_results
 from .share_sync import ShareSync, SyncConfig, SyncRequest, SyncResult
 from .library import LibraryConfig, LibraryIndex, LibraryView
+from .routing import TargetResolver
 
 
 class MppgdonTest(_PluginBase):
@@ -23,7 +24,7 @@ class MppgdonTest(_PluginBase):
     plugin_name = "MPPGDON 网盘搜索"
     plugin_desc = "通过 PanSou 搜索、筛选和去重 115 分享资源。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Moviepilot_A.png"
-    plugin_version = "0.5.0"
+    plugin_version = "0.6.0"
     plugin_author = "xdong125"
     author_url = "https://github.com/xdong125"
     plugin_config_prefix = "mppgdontest_"
@@ -52,14 +53,6 @@ class MppgdonTest(_PluginBase):
             self._config_error = str(error)
         if not hasattr(self, "_search_lock"):
             self._search_lock = threading.Lock()
-        self._sync = None
-        self._sync_error = ""
-        try:
-            sync = SyncConfig.from_settings(config)
-            if sync:
-                self._sync = ShareSync(sync, self.get_data_path)
-        except SearchError as error:
-            self._sync_error = str(error)
         if not hasattr(self, '_library'):
             self._library = LibraryIndex(lambda: self.get_data_path())
         self._library_config = LibraryConfig((), ())
@@ -68,6 +61,16 @@ class MppgdonTest(_PluginBase):
             self._library_config = LibraryConfig.from_settings(config)
         except SearchError as error:
             self._library_error = str(error)
+        self._sync = None
+        self._sync_error = ''
+        try:
+            sync = SyncConfig.from_settings(config)
+            if sync:
+                if self._library_error or not self._library_config.roots:
+                    raise SearchError(self._library_error or '请先配置电影或电视剧根目录。')
+                self._sync = ShareSync(sync, self.get_data_path, TargetResolver(self._library_config, self._library))
+        except SearchError as error:
+            self._sync_error = str(error)
 
     def get_state(self) -> bool:
         """返回用户设置的插件启用状态。"""
@@ -86,7 +89,7 @@ class MppgdonTest(_PluginBase):
     @staticmethod
     def get_sidebar_nav() -> list[dict]:
         """通过宿主导航注册独立页面，不修改原生探索。"""
-        return [{"nav_key": "main", "title": "TheMovieDb 网盘搜索",
+        return [{"nav_key": "main", "title": "发现",
                  "icon": "mdi-movie-search-outline", "section": "discovery",
                  "permission": "search", "order": 30}]
 
@@ -179,7 +182,7 @@ class MppgdonTest(_PluginBase):
         try:
             data = await asyncio.to_thread(run_search)
             if sync is not None and sync is self._sync:
-                sync.add_tickets(data)
+                await asyncio.to_thread(sync.add_tickets, data, payload)
             return schemas.Response(success=True, message="", data=data)
         except SearchError as error:
             return schemas.Response(success=False, message=str(error))
@@ -188,7 +191,7 @@ class MppgdonTest(_PluginBase):
     def _search_sync(payload: SearchRequest, base: str, token: str) -> SearchData:
         """通过稳定网络 SDK 读取有界响应，拒绝重定向且不重试。"""
         headers = {"Accept": "application/json", "Content-Type": "application/json",
-                   "User-Agent": "MoviePilot-Mppgdon/0.5.0"}
+                   "User-Agent": "MoviePilot-Mppgdon/0.6.0"}
         if token:
             headers["Authorization"] = "Bearer " + token
         client = RequestUtils(headers=headers, timeout=35, verify=True)
@@ -198,7 +201,7 @@ class MppgdonTest(_PluginBase):
                 base + "/api/search",
                 json={"kw": payload.keyword, "res": "all", "src": "all", "refresh": False,
                       "cloud_types": ["115"], "conc": 1,
-                      "filter": {"exclude": ["预告", "花絮", "CAM", "枪版"]}},
+                      "filter": {"exclude": ["预告", "花絮"]}},
                 allow_redirects=False, stream=True,
             )
             if response is None:
@@ -226,7 +229,7 @@ class MppgdonTest(_PluginBase):
     def get_form(self) -> tuple[None, dict]:
         """为 Vue 配置页提供默认值；旧版 enabled 配置继续生效。"""
         return None, {"enabled": False, "pansou_url": DEFAULT_URL, "pansou_token": "",
-                      "cms_url": "", "cms_login_token": "", "cms_sync_path": "",
+                      "cms_url": "", "cms_login_token": "",
                       "cms_sync_cid": "0", "cms_sync_live": False,
                       "library_movie_root": "", "library_tv_root": "", "library_path_mapping": ""}
 
