@@ -211,11 +211,13 @@ class _NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _request(config: SyncConfig, route: str, *, timeout: int, body: dict | None = None) -> tuple[int, dict]:
+def _request(config: SyncConfig, route: str, *, timeout: int, body: dict | None = None, bearer: bool = True) -> tuple[int, dict]:
     opener = build_opener(ProxyHandler({}), _NoRedirect())
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    if bearer:
+        headers['Authorization'] = f'Bearer {config.token}'
     request = Request(config.base + route, data=json.dumps(body).encode() if body is not None else None,
-                      headers={"Authorization": f"Bearer {config.token}", "Accept": "application/json",
-                               "Content-Type": "application/json"})
+                      headers=headers)
     try:
         with opener.open(request, timeout=timeout) as response:
             content = response.read(256 * 1024 + 1)

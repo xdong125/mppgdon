@@ -4,6 +4,7 @@ import AppPage from '../src/AppPage.vue'
 import Config from '../src/Config.vue'
 const config = ref({enabled: true, pansou_url: 'https://pansou.tiandechi.com', cms_url: 'https://cms.example',
   cms_sync_cid: '0', cms_sync_live: false,
+  cms_api_token:'', cms_transfer_live:false,
   library_movie_root: '/mnt/media/电影', library_tv_root: '/mnt/media/电视剧', library_path_mapping: '/mnt/media#/media'})
 const configure = ref(location.search.includes('config'))
 let scanned = false
@@ -45,17 +46,20 @@ const api = {
     const data = path === 'media/search' ? [...movies, ...shows].filter(item => String(item.title).includes(String(params?.title ?? '')))
       : path.startsWith('discover/') ? (path.endsWith('_tvs') ? shows : movies).filter(item => Number(item.vote_average) >= Number(params?.vote_average ?? 0))
       : {enabled: config.value.enabled, pansou_url: config.value.pansou_url, token_set: false,
-          config_error: '', sync_mode: config.value.cms_sync_live ? 'live' : 'dry_run', version: '0.6.0'}
+          config_error: '', sync_mode: config.value.cms_sync_live ? 'live' : 'dry_run',
+          transfer_mode:config.value.cms_transfer_live ? 'live' : 'dry_run', version: '0.7.0'}
     return {success: true, message: '', data}
   },
   async post(path: string, request: {keyword: string; year?: string; media_type?: string; season?: number}) {
     if (path.endsWith('/library/scan')) {scanned = true; return {success:true, message:'模拟扫描完成。', data:libraryView()}}
+    if (path.endsWith('/transfer')) return {success:true, message:'模拟转存完成，未请求任何 CMS。', data:{status:'dry_run', retryable:false, attempt_id:null}}
     if (path.endsWith('/share-sync')) return {success: true, message: '模拟提交完成，未请求任何 CMS。', data: {status: 'dry_run'}}
     return {success: true, message: '', data: {
     keyword: request.keyword, raw_115: 3, duplicates: 1, filtered: 0, truncated: false,
     items: [1,2].map(n => ({id: 'preview'+n, title: `${request.keyword} ${request.year ? `(${request.year}) ` : ''}4K WEB-DL · 样例 ${n}`,
       url: `https://115cdn.com/s/preview${n}`, password: 'demo', source: '演示数据（非真实分享）',
       published: '', quality: '2160p', episode: '季集未标注', collection: false, password_conflict: false, sync_ticket: `preview-ticket-${n}`,
+      transfer_ticket:`preview-transfer-ticket-${n}`,
       sync_target: {mp_path:`/mnt/media/${request.media_type === 'tv' ? `电视剧/${request.keyword}/S${String(request.season ?? 1).padStart(2,'0')}` : `电影/${request.keyword} (${request.year || '2026'})`}`,
         cms_path:`/media/${request.media_type === 'tv' ? `电视剧/${request.keyword}/S${String(request.season ?? 1).padStart(2,'0')}` : `电影/${request.keyword} (${request.year || '2026'})`}`, kind:request.media_type || 'movie', season:request.season ?? null, reason:'演示目标'},
       duplicate_records: n === 1 ? [{title: `${request.keyword} 4K · 重复来源样例`, source: '演示频道',

@@ -3,14 +3,34 @@ import { flushPromises, mount } from '@vue/test-utils'
 import Page from '../src/Page.vue'
 import Config from '../src/Config.vue'
 
-function setup(post = vi.fn(), sync_mode?: string) {
-  const api = {get: vi.fn().mockResolvedValue({success: true, message: '', data: {enabled: true, version: '0.4.0', pansou_url: 'https://example.test', token_set: false, config_error: '', sync_mode}}), post}
+function setup(post = vi.fn(), sync_mode?: string, transfer_mode?: string) {
+  const api = {get: vi.fn().mockResolvedValue({success: true, message: '', data: {enabled: true, version: '0.7.0', pansou_url: 'https://example.test', token_set: false, config_error: '', sync_mode, transfer_mode}}), post}
   const wrapper = mount(Page, {props: {api, pluginId: 'MppgdonTestCopy'}})
   return {wrapper, api}
 }
 const item = {id: 'abc', title: '<img src=x onerror=alert(1)>', url: 'https://115cdn.com/s/example', password: 'abcd', source: 'fixture', published: '', quality: '2160p', episode: 'S01E01', collection: false, password_conflict: false}
 
 describe('search page host contract', () => {
+  it('transfers independently of a sync path and blocks accepted resubmission', async () => {
+    const post = vi.fn().mockResolvedValueOnce({success:true, data:{items:[{...item, transfer_ticket:'fake-transfer-ticket', sync_error:'季号未知'}], duplicates:0, filtered:0}})
+      .mockResolvedValueOnce({success:true, message:'CMS 已受理转存', data:{status:'accepted', attempt_id:'transfer-attempt-0001', retryable:false}})
+    const {wrapper} = setup(post, 'unavailable', 'live')
+    await flushPromises()
+    await wrapper.get('input[name=keyword]').setValue('测试剧')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const button = wrapper.get('.mp-transfer')
+    expect(button.attributes('disabled')).toBeUndefined()
+    expect(wrapper.get('.mp-sync').attributes('disabled')).toBeDefined()
+    await button.trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenLastCalledWith('plugin/MppgdonTestCopy/transfer', {
+      ticket:'fake-transfer-ticket', request_id:expect.stringMatching(/^[a-f0-9]{32}$/), expected_attempt:null,
+    }, expect.anything())
+    expect(wrapper.text()).toContain('CMS 已受理转存')
+    expect(button.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
+  })
   it('uses scoped API, current instance ID and final envelope; renders text safely', async () => {
     const {wrapper, api} = setup(vi.fn().mockResolvedValue({success: true, message: '', data: {items: [item], duplicates: 1, filtered: 2}}))
     await flushPromises()
@@ -110,6 +130,18 @@ describe('search page host contract', () => {
 })
 
 describe('configuration upgrade', () => {
+  it('keeps transfer credentials and live mode separate from share sync settings', async () => {
+    const wrapper = mount(Config, {props:{initialConfig:{cms_url:'https://cms.example', cms_login_token:'fake-web-secret', cms_sync_live:true}}})
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({cms_transfer_live:false, cms_api_token:'', cms_login_token:'fake-web-secret', cms_sync_live:true})
+    await wrapper.get('.cms-transfer-settings input[type=checkbox]').setValue(true)
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.get('[role=alert]').text()).toContain('CMS_API_TOKEN')
+    await wrapper.get('.cms-transfer-settings input[type=password]').setValue('fake-api-secret')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('save')?.[1]?.[0]).toMatchObject({cms_transfer_live:true, cms_api_token:'fake-api-secret', cms_login_token:'fake-web-secret', cms_sync_live:true})
+    wrapper.unmount()
+  })
   it('preserves enabled and unknown legacy config fields when saving', async () => {
     const wrapper = mount(Config, {props: {initialConfig: {enabled: true, message: 'legacy'}}})
     await wrapper.get('form').trigger('submit')

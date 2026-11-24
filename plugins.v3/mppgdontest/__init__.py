@@ -16,6 +16,7 @@ from .search import DEFAULT_URL, SearchData, SearchError, SearchRequest, StatusD
 from .share_sync import ShareSync, SyncConfig, SyncRequest, SyncResult
 from .library import LibraryConfig, LibraryIndex, LibraryView
 from .routing import TargetResolver
+from .transfer import TransferConfig, TransferManager, TransferRequest, TransferResult
 
 
 class MppgdonTest(_PluginBase):
@@ -24,7 +25,7 @@ class MppgdonTest(_PluginBase):
     plugin_name = "MPPGDON 网盘搜索"
     plugin_desc = "通过 PanSou 搜索、筛选和去重 115 分享资源。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Moviepilot_A.png"
-    plugin_version = "0.6.0"
+    plugin_version = "0.7.0"
     plugin_author = "xdong125"
     author_url = "https://github.com/xdong125"
     plugin_config_prefix = "mppgdontest_"
@@ -36,6 +37,8 @@ class MppgdonTest(_PluginBase):
     _config_error = ""
     _sync = None
     _sync_error = ""
+    _transfer = None
+    _transfer_error = ''
 
     def init_plugin(self, config: dict | None = None) -> None:
         """加载连接配置；初始化和重载均不主动搜索。"""
@@ -71,6 +74,14 @@ class MppgdonTest(_PluginBase):
                 self._sync = ShareSync(sync, self.get_data_path, TargetResolver(self._library_config, self._library))
         except SearchError as error:
             self._sync_error = str(error)
+        self._transfer = None
+        self._transfer_error = ''
+        try:
+            transfer = TransferConfig.from_settings(config)
+            if transfer:
+                self._transfer = TransferManager(transfer, self.get_data_path)
+        except SearchError as error:
+            self._transfer_error = str(error)
 
     def get_state(self) -> bool:
         """返回用户设置的插件启用状态。"""
@@ -105,6 +116,9 @@ class MppgdonTest(_PluginBase):
             {"path": "/share-sync", "endpoint": self.submit_share_sync, "methods": ["POST"],
              "auth": "bear", "summary": "管理员手动提交 CMS 分享同步",
              "response_model": schemas.Response[SyncResult]},
+            {"path": "/transfer", "endpoint": self.submit_transfer, "methods": ["POST"],
+             "auth": "bear", "summary": "管理员手动提交 CMS 官方转存",
+             "response_model": schemas.Response[TransferResult]},
             {"path": "/library", "endpoint": self.library_view, "methods": ["GET"],
              "auth": "bear", "summary": "管理员查看本地媒体库索引",
              "response_model": schemas.Response[LibraryView]},
@@ -150,7 +164,19 @@ class MppgdonTest(_PluginBase):
             pansou_url=self._base, token_set=bool(self._token), config_error=self._config_error,
             sync_mode=("live" if self._sync.config.live else "dry_run") if self._enabled and self._sync else "unavailable",
             sync_error=self._sync_error,
+            transfer_mode=('live' if self._transfer.config.live else 'dry_run') if self._enabled and self._transfer else 'unavailable',
+            transfer_error=self._transfer_error,
         ))
+
+    async def submit_transfer(
+        self, payload: TransferRequest, _admin=Depends(get_current_active_superuser),
+    ) -> schemas.Response[TransferResult]:
+        transfer = self._transfer
+        if not self._enabled or transfer is None:
+            return schemas.Response(success=True, data=TransferResult(status='not_sent'),
+                                    message=self._transfer_error or '请先启用插件并保存 CMS 转存设置。')
+        result, message = await asyncio.to_thread(transfer.submit, payload)
+        return schemas.Response(success=True, data=result, message=message)
 
     async def submit_share_sync(
         self, payload: SyncRequest, _admin=Depends(get_current_active_superuser),
@@ -168,7 +194,7 @@ class MppgdonTest(_PluginBase):
             return schemas.Response(success=False, message="请先在配置中启用插件并保存。")
         if self._config_error:
             return schemas.Response(success=False, message=self._config_error)
-        base, token, sync = self._base, self._token, self._sync
+        base, token, sync, transfer = self._base, self._token, self._sync, self._transfer
 
         def run_search():
             """由工作线程持有锁，客户端取消也不提前开放第二次请求。"""
@@ -181,6 +207,8 @@ class MppgdonTest(_PluginBase):
 
         try:
             data = await asyncio.to_thread(run_search)
+            if transfer is not None and transfer is self._transfer:
+                transfer.add_tickets(data)
             if sync is not None and sync is self._sync:
                 await asyncio.to_thread(sync.add_tickets, data, payload)
             return schemas.Response(success=True, message="", data=data)
@@ -191,7 +219,7 @@ class MppgdonTest(_PluginBase):
     def _search_sync(payload: SearchRequest, base: str, token: str) -> SearchData:
         """通过稳定网络 SDK 读取有界响应，拒绝重定向且不重试。"""
         headers = {"Accept": "application/json", "Content-Type": "application/json",
-                   "User-Agent": "MoviePilot-Mppgdon/0.6.0"}
+                   "User-Agent": "MoviePilot-Mppgdon/0.7.0"}
         if token:
             headers["Authorization"] = "Bearer " + token
         client = RequestUtils(headers=headers, timeout=35, verify=True)
@@ -231,6 +259,7 @@ class MppgdonTest(_PluginBase):
         return None, {"enabled": False, "pansou_url": DEFAULT_URL, "pansou_token": "",
                       "cms_url": "", "cms_login_token": "",
                       "cms_sync_cid": "0", "cms_sync_live": False,
+                      "cms_api_token": "", "cms_transfer_live": False,
                       "library_movie_root": "", "library_tv_root": "", "library_path_mapping": ""}
 
     def get_page(self) -> list:
@@ -241,5 +270,6 @@ class MppgdonTest(_PluginBase):
         """停止接收新请求；不取消已经发出的 CMS 提交。"""
         self._enabled = False
         self._sync = None
+        self._transfer = None
         if hasattr(self, '_library'):
             self._library.stop()

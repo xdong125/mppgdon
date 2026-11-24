@@ -5,6 +5,7 @@ const props = defineProps<{initialConfig?: Record<string, unknown>}>()
 const emit = defineEmits(['save', 'close', 'switch'])
 const config = ref({enabled: false, pansou_url: 'https://pansou.tiandechi.com', pansou_token: '',
   cms_url: '', cms_login_token: '', cms_sync_cid: '0', cms_sync_live: false,
+  cms_api_token: '', cms_transfer_live: false,
   library_movie_root: '', library_tv_root: '', library_path_mapping: '', ...props.initialConfig})
 const error = ref('')
 const testPath = ref('')
@@ -27,7 +28,7 @@ function save() {
       }
     }
   } catch (cause) { error.value = (cause as Error).message; return }
-  if (config.value.cms_url || config.value.cms_sync_live) {
+  if (config.value.cms_url || config.value.cms_sync_live || config.value.cms_transfer_live || config.value.cms_api_token) {
     try {
       const url = new URL(config.value.cms_url.trim())
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/') throw new Error()
@@ -39,6 +40,12 @@ function save() {
     if ((config.value.cms_login_token.trim() || config.value.cms_sync_live) && !/^[A-Za-z0-9._~+/=-]{1,8192}$/.test(token)) {
       error.value = '请填写 CMS 网页登录 Bearer Token，不要填写 Cookie。'; return
     }
+  }
+  if (config.value.cms_transfer_live && !config.value.cms_api_token.trim()) {
+    error.value = '请填写 CMS_API_TOKEN 后再开启真实转存。'; return
+  }
+  if (config.value.cms_api_token.length > 8192 || /[^\x20-\x7e]/.test(config.value.cms_api_token)) {
+    error.value = 'CMS_API_TOKEN 格式错误，请重新填写。'; return
   }
   const saved: Record<string, unknown> = {...config.value}
   delete saved.cms_sync_path
@@ -55,11 +62,17 @@ function save() {
       <label>PanSou Token（可选）<input v-model="config.pansou_token" type="password" autocomplete="off" placeholder="公开服务通常留空" /></label>
       <p>这里填写 PanSou 的认证 Token；当前默认公开服务可留空。地址填写服务根地址，搜索请求由 MP 后端发送。</p>
       <fieldset class="cms-settings">
-        <legend>CMS 分享同步</legend>
+        <legend>CMS 连接与分享同步</legend>
         <label>CMS 根地址<input v-model="config.cms_url" type="url" placeholder="http://NAS地址:端口" /></label>
         <label>CMS 网页登录 Token<input v-model="config.cms_login_token" type="password" autocomplete="new-password" maxlength="8214" placeholder="Bearer Token，不是 Cookie 或 CMS_API_TOKEN" /></label>
         <label>分享目录 CID（0 = 整个分享）<input v-model="config.cms_sync_cid" type="text" inputmode="numeric" maxlength="20" /></label>
-        <label class="mp-toggle"><input v-model="config.cms_sync_live" type="checkbox" /> 启用真实提交（未勾选时仅演练）</label>
+        <label class="mp-toggle"><input v-model="config.cms_sync_live" type="checkbox" /> 启用真实分享同步（未勾选时仅演练）</label>
+      </fieldset>
+      <fieldset class="cms-settings cms-transfer-settings">
+        <legend>CMS 转存</legend>
+        <label>CMS_API_TOKEN（转存专用）<input v-model="config.cms_api_token" type="password" autocomplete="new-password" maxlength="8192" placeholder="与 CMS 中配置的 CMS_API_TOKEN 一致" /></label>
+        <label class="mp-toggle"><input v-model="config.cms_transfer_live" type="checkbox" /> 启用真实转存（未勾选时仅演练）</label>
+        <p>沿用上方 CMS 根地址。转存保存到网盘，目标由 CMS 自身配置决定；此 Token 与网页登录 Token 分开使用。</p>
       </fieldset>
       <fieldset class="cms-settings">
         <legend>媒体库索引</legend>

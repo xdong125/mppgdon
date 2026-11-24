@@ -44,10 +44,11 @@ def load_plugin():
         search = sys.modules[name + ".search"]
         sync = sys.modules[name + ".share_sync"]
         library = sys.modules[name + ".library"]
-    return module, search, sync, library
+        transfer = sys.modules[name + '.transfer']
+    return module, search, sync, library, transfer
 
 
-MODULE, SEARCH, SYNC, LIBRARY = load_plugin()
+MODULE, SEARCH, SYNC, LIBRARY, TRANSFER = load_plugin()
 
 
 def fixture():

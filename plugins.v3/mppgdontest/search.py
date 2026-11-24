@@ -70,6 +70,7 @@ class SearchItem(BaseModel):
     password_conflict: bool = False
     duplicate_records: list[DuplicateRecord] = Field(default_factory=list)
     sync_ticket: str | None = None
+    transfer_ticket: str | None = None
     sync_target: SyncTarget | None = None
     sync_error: str = ''
 
@@ -95,6 +96,8 @@ class StatusData(BaseModel):
     config_error: str = ""
     sync_mode: Literal["unavailable", "dry_run", "live"] = "unavailable"
     sync_error: str = ""
+    transfer_mode: Literal['unavailable', 'dry_run', 'live'] = 'unavailable'
+    transfer_error: str = ''
 
 
 def normalize_base(value: str) -> str:

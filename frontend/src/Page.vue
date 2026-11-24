@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
-import type { Api, DuplicateRecord, Envelope, Item, Results, Status, SyncResult } from './types'
+import type { Api, DuplicateRecord, Envelope, Item, Results, Status, SyncResult, TransferResult } from './types'
 
 const props = defineProps<{
   api: Api; pluginId: string; sourcePluginId?: string; embedded?: boolean
@@ -17,6 +17,9 @@ const busy = ref(false), error = ref(''), notice = ref(''), searched = ref(false
 const expandedItemId = ref<string | null>(null)
 const showDuplicates = ref(false)
 const syncingId = ref('')
+const transferringId = ref('')
+const transferNotices = ref<Record<string, TransferResult & {message: string}>>({})
+const transferIds = ref<Record<string, string>>({})
 const syncNotices = ref<Record<string, {status: SyncResult['status']; message: string}>>({})
 const visibleDuplicateCount = computed(() => results.value?.items.reduce(
   (count, item) => count + (item.duplicate_records?.length ?? 0), 0,
@@ -41,7 +44,7 @@ async function loadStatus() {
 }
 
 async function search() {
-  if (busy.value || syncingId.value) return
+  if (busy.value || syncingId.value || transferringId.value) return
   error.value = ''; notice.value = ''
   if (!keyword.value.trim()) {error.value = '请输入影视名称。'; return}
   if (year.value && !/^(19|20)\d{2}$/.test(year.value)) {error.value = '年份请输入四位数字。'; return}
@@ -50,6 +53,7 @@ async function search() {
   busy.value = true; results.value = null; searched.value = false; expandedItemId.value = null
   showDuplicates.value = false
   syncNotices.value = {}
+  transferNotices.value = {}; transferIds.value = {}
   try {
     const response = await props.api.post(`plugin/${props.pluginId}/search`, {
       keyword: keyword.value.trim(), year: year.value, qualities: qualities.value,
@@ -70,7 +74,7 @@ function canSync(item: Item) {
 }
 
 async function syncShare(item: Item) {
-  if (syncingId.value || !canSync(item)) return
+  if (syncingId.value || transferringId.value || !canSync(item)) return
   syncingId.value = item.id
   try {
     const response = await props.api.post(`plugin/${props.pluginId}/share-sync`, {ticket: item.sync_ticket},
@@ -87,6 +91,38 @@ async function syncShare(item: Item) {
   } finally {
     syncingId.value = ''
   }
+}
+
+function canTransfer(item: Item) {
+  const mode = status.value?.transfer_mode
+  const previous = transferNotices.value[item.id]?.status
+  return (mode === 'dry_run' || mode === 'live') && Boolean(item.transfer_ticket) && !item.password_conflict
+    && previous !== 'accepted' && previous !== 'unknown'
+}
+
+function transferRequestId() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), value => value.toString(16).padStart(2, '0')).join('')
+}
+
+async function transferShare(item: Item) {
+  if (transferringId.value || syncingId.value || !canTransfer(item)) return
+  const previous = transferNotices.value[item.id]
+  transferringId.value = item.id
+  try {
+    if (previous?.retryable) transferIds.value[item.id] = transferRequestId()
+    const requestId = transferIds.value[item.id] ??= transferRequestId()
+    const response = await props.api.post(`plugin/${props.pluginId}/transfer`, {
+      ticket: item.transfer_ticket, request_id: requestId,
+      expected_attempt: previous?.retryable ? previous.attempt_id : null,
+    }, {feedback:'silent', timeout:45000}) as Envelope<TransferResult>
+    if (!response.success || !response.data?.status) throw new Error()
+    transferNotices.value[item.id] = {...response.data, message:response.message}
+  } catch (cause) {
+    const failure = cause as {status?: number; response?: {status?: number}} | null
+    const forbidden = (failure?.status ?? failure?.response?.status) === 403
+    transferNotices.value[item.id] = {status:forbidden ? 'not_sent' : 'unknown', attempt_id:null, retryable:false,
+      message:forbidden ? '转存权限不足，未提交。仅超级管理员可操作。' : '转存未收到明确结果，请在 CMS 核对；不会自动重试。'}
+  } finally { transferringId.value = '' }
 }
 
 async function copy(item: Item) {
@@ -118,7 +154,7 @@ onMounted(initialize)
       <label>年份（可选）<input v-model="year" name="year" maxlength="4" inputmode="numeric" placeholder="2026" :disabled="busy" /></label>
       <label>类型<select v-model="mediaType" name="media_type" :disabled="busy"><option value="">自动匹配媒体库</option><option value="movie">电影</option><option value="tv">电视剧</option></select></label>
       <label v-if="mediaType !== 'movie'">季号（可选）<input v-model="season" name="season" maxlength="3" inputmode="numeric" placeholder="自动识别" :disabled="busy" /></label>
-      <button class="mp-primary" type="submit" :disabled="busy || !!syncingId || !status?.enabled || !!status?.config_error">{{ busy ? '搜索中…' : '搜索资源' }}</button>
+      <button class="mp-primary" type="submit" :disabled="busy || !!syncingId || !!transferringId || !status?.enabled || !!status?.config_error">{{ busy ? '搜索中…' : '搜索资源' }}</button>
     </form>
     <div class="mp-quality-options" role="group" aria-label="清晰度筛选">
       <span class="mp-muted" title="仅搜索115；画质和季集来自标题，实际内容及链接有效性请自行核实">清晰度</span>
@@ -145,7 +181,10 @@ onMounted(initialize)
               <p :title="item.sync_target ? `同步至：${item.sync_target.cms_path} · ${subtitle(item)}` : item.sync_error || subtitle(item)">{{ item.sync_target ? `同步至：${item.sync_target.cms_path}` : item.sync_error || subtitle(item) }}</p>
             </div>
             <div class="mp-row-actions">
-              <button type="button" class="mp-sync" :disabled="!!syncingId || !canSync(item)"
+              <button type="button" class="mp-transfer" :disabled="!!transferringId || !!syncingId || !canTransfer(item)"
+                :title="status?.transfer_error || (transferNotices[item.id]?.retryable ? '确认 CMS 中没有该转存任务后点击重试' : '通过 CMS 转存整个分享，目标由 CMS 自身配置决定')"
+                @click="transferShare(item)">{{ transferringId === item.id ? '转存中…' : transferNotices[item.id]?.retryable ? '确认无任务后重试' : status?.transfer_mode === 'dry_run' ? '演练转存' : '转存' }}</button>
+              <button type="button" class="mp-sync" :disabled="!!syncingId || !!transferringId || !canSync(item)"
                 :title="item.sync_error || status?.sync_error || (status?.sync_mode === 'unavailable' ? '请先保存 CMS 分享同步设置' : item.sync_target?.cms_path)"
                 @click="syncShare(item)">{{ syncingId === item.id ? '提交中…' : status?.sync_mode === 'dry_run' ? '演练同步' : '分享同步' }}</button>
               <button type="button" title="分享信息" aria-label="分享信息"
@@ -156,6 +195,7 @@ onMounted(initialize)
                 target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">打开 ↗</a>
             </div>
           </div>
+          <p v-if="transferNotices[item.id]" class="mp-sync-notice" role="status">转存：{{ transferNotices[item.id].message }}</p>
           <p v-if="syncNotices[item.id]" class="mp-sync-notice" role="status">{{ syncNotices[item.id].message }}</p>
           <div v-if="expandedItemId === item.id" class="mp-details">
             <p>{{ item.title }}</p>
