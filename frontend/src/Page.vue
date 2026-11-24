@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from 'vue'
-import type { Api, DuplicateRecord, Envelope, Item, Results, Status } from './types'
+import type { Api, DuplicateRecord, Envelope, Item, Results, Status, SyncResult } from './types'
 
 const props = defineProps<{
   api: Api; pluginId: string; sourcePluginId?: string; embedded?: boolean
@@ -13,6 +13,8 @@ const status = ref<Status | null>(null), results = ref<Results | null>(null)
 const busy = ref(false), error = ref(''), notice = ref(''), searched = ref(false)
 const expandedItemId = ref<string | null>(null)
 const showDuplicates = ref(false)
+const syncingId = ref('')
+const syncNotices = ref<Record<string, {status: SyncResult['status']; message: string}>>({})
 const visibleDuplicateCount = computed(() => results.value?.items.reduce(
   (count, item) => count + (item.duplicate_records?.length ?? 0), 0,
 ) ?? 0)
@@ -36,12 +38,13 @@ async function loadStatus() {
 }
 
 async function search() {
-  if (busy.value) return
+  if (busy.value || syncingId.value) return
   error.value = ''; notice.value = ''
   if (!keyword.value.trim()) {error.value = '请输入影视名称。'; return}
   if (year.value && !/^(19|20)\d{2}$/.test(year.value)) {error.value = '年份请输入四位数字。'; return}
   busy.value = true; results.value = null; searched.value = false; expandedItemId.value = null
   showDuplicates.value = false
+  syncNotices.value = {}
   try {
     const response = await props.api.post(`plugin/${props.pluginId}/search`, {
       keyword: keyword.value.trim(), year: year.value, resolution: resolution.value,
@@ -50,6 +53,33 @@ async function search() {
     results.value = response.data; searched.value = true
   } catch { error.value = '搜索请求失败，请检查 MP 与 PanSou 的连接后重试。' }
   finally { busy.value = false }
+}
+
+function canSync(item: Item) {
+  const mode = status.value?.sync_mode
+  const previous = syncNotices.value[item.id]?.status
+  return (mode === 'dry_run' || mode === 'live') && Boolean(item.sync_ticket) && !item.password_conflict
+    && previous !== 'accepted' && previous !== 'unknown'
+}
+
+async function syncShare(item: Item) {
+  if (syncingId.value || !canSync(item)) return
+  syncingId.value = item.id
+  try {
+    const response = await props.api.post(`plugin/${props.pluginId}/share-sync`, {ticket: item.sync_ticket},
+      {feedback: 'silent', timeout: 55000}) as Envelope<SyncResult>
+    if (!response.success || !response.data?.status) throw new Error()
+    syncNotices.value[item.id] = {status: response.data.status, message: response.message}
+  } catch (cause) {
+    const failure = cause as {status?: number; response?: {status?: number}} | null
+    if ((failure?.status ?? failure?.response?.status) === 403) {
+      syncNotices.value[item.id] = {status: 'not_sent', message: '权限不足，未提交。仅 MoviePilot 超级管理员可操作。'}
+    } else {
+      syncNotices.value[item.id] = {status: 'unknown', message: '未收到明确结果，请在 CMS 核对；不会自动重试。'}
+    }
+  } finally {
+    syncingId.value = ''
+  }
 }
 
 async function copy(item: Item) {
@@ -80,7 +110,7 @@ onMounted(initialize)
       <label>影视名称<input v-model="keyword" name="keyword" maxlength="120" placeholder="例如：无声的回响" :disabled="busy" /></label>
       <label>年份（可选）<input v-model="year" name="year" maxlength="4" inputmode="numeric" placeholder="2026" :disabled="busy" /></label>
       <label>清晰度<select v-model="resolution" name="resolution" :disabled="busy"><option value="all">全部</option><option value="2160p">4K / 2160p</option><option value="1080p">1080p</option></select></label>
-      <button class="mp-primary" type="submit" :disabled="busy || !status?.enabled || !!status?.config_error">{{ busy ? '搜索中…' : '搜索资源' }}</button>
+      <button class="mp-primary" type="submit" :disabled="busy || !!syncingId || !status?.enabled || !!status?.config_error">{{ busy ? '搜索中…' : '搜索资源' }}</button>
     </form>
     <p class="mp-muted">仅搜索 115 · 标题中的季集、画质和链接有效性待自行核实</p>
     <div v-if="error" class="mp-alert mp-error" role="alert">{{ error }} <button v-if="!status" type="button" @click="initialize">重新连接</button></div>
@@ -104,6 +134,9 @@ onMounted(initialize)
               <p :title="subtitle(item)">{{ subtitle(item) }}</p>
             </div>
             <div class="mp-row-actions">
+              <button type="button" class="mp-sync" :disabled="!!syncingId || !canSync(item)"
+                :title="status?.sync_error || (status?.sync_mode === 'unavailable' ? '请先保存 CMS 分享同步设置' : undefined)"
+                @click="syncShare(item)">{{ syncingId === item.id ? '提交中…' : status?.sync_mode === 'dry_run' ? '演练同步' : '分享同步' }}</button>
               <button type="button" title="分享信息" aria-label="分享信息"
                 :aria-expanded="expandedItemId === item.id"
                 @click="expandedItemId = expandedItemId === item.id ? null : item.id">详情</button>
@@ -112,6 +145,7 @@ onMounted(initialize)
                 target="_blank" rel="noopener noreferrer" referrerpolicy="no-referrer">打开 ↗</a>
             </div>
           </div>
+          <p v-if="syncNotices[item.id]" class="mp-sync-notice" role="status">{{ syncNotices[item.id].message }}</p>
           <div v-if="expandedItemId === item.id" class="mp-details">
             <p>{{ item.title }}</p>
             <p v-if="item.password_conflict" class="mp-warning">同一分享存在不同提取码，请手动核对，已禁用快捷操作。</p>
@@ -149,6 +183,8 @@ onMounted(initialize)
 .mp-row-text p{font-size:12px;line-height:16px;opacity:.7}
 .mp-row-actions{display:flex;gap:4px;align-items:center;white-space:nowrap}
 .mp-row-actions button,.mp-row-actions a{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:28px;padding:0 6px;line-height:1;border-radius:5px;font-size:12px}
+.mp-row-actions .mp-sync{inline-size:4.6rem}
+.mp-sync-notice{margin:0;padding:0 10px 8px;font-size:12px;overflow-wrap:anywhere}
 .mp-row-actions button:not(:disabled):hover,.mp-row-actions a:hover,.mp-row-actions [aria-expanded="true"]{background:rgba(var(--v-theme-on-surface,35,42,56),.08)}
 .mp-details{padding:7px 10px 9px;border-top:1px solid rgba(var(--v-theme-on-surface,35,42,56),.14);font-size:12px;overflow-wrap:anywhere}
 .mp-details p{margin:2px 0}

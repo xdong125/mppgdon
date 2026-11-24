@@ -4,11 +4,15 @@ import asyncio
 import json
 import threading
 
+from fastapi import Depends
+
 from app import schemas
+from app.api.dependencies.auth import get_current_active_superuser
 from app.sdk.network import RequestUtils
 from app.sdk.plugin import _PluginBase
 
 from .search import DEFAULT_URL, SearchData, SearchError, SearchRequest, StatusData, normalize_base, normalize_results
+from .share_sync import ShareSync, SyncConfig, SyncRequest, SyncResult
 
 
 class MppgdonTest(_PluginBase):
@@ -17,7 +21,7 @@ class MppgdonTest(_PluginBase):
     plugin_name = "MPPGDON 网盘搜索"
     plugin_desc = "通过 PanSou 搜索、筛选和去重 115 分享资源。"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/Moviepilot_A.png"
-    plugin_version = "0.3.1"
+    plugin_version = "0.4.0"
     plugin_author = "xdong125"
     author_url = "https://github.com/xdong125"
     plugin_config_prefix = "mppgdontest_"
@@ -27,6 +31,8 @@ class MppgdonTest(_PluginBase):
     _base = DEFAULT_URL
     _token = ""
     _config_error = ""
+    _sync = None
+    _sync_error = ""
 
     def init_plugin(self, config: dict | None = None) -> None:
         """加载连接配置；初始化和重载均不主动搜索。"""
@@ -44,6 +50,14 @@ class MppgdonTest(_PluginBase):
             self._config_error = str(error)
         if not hasattr(self, "_search_lock"):
             self._search_lock = threading.Lock()
+        self._sync = None
+        self._sync_error = ""
+        try:
+            sync = SyncConfig.from_settings(config)
+            if sync:
+                self._sync = ShareSync(sync, self.get_data_path)
+        except SearchError as error:
+            self._sync_error = str(error)
 
     def get_state(self) -> bool:
         """返回用户设置的插件启用状态。"""
@@ -75,6 +89,9 @@ class MppgdonTest(_PluginBase):
             {"path": "/search", "endpoint": self.search, "methods": ["POST"],
              "auth": "bear", "summary": "搜索 PanSou 115 分享",
              "response_model": schemas.Response[SearchData]},
+            {"path": "/share-sync", "endpoint": self.submit_share_sync, "methods": ["POST"],
+             "auth": "bear", "summary": "管理员手动提交 CMS 分享同步",
+             "response_model": schemas.Response[SyncResult]},
         ]
 
     def get_status(self) -> schemas.Response[StatusData]:
@@ -82,7 +99,19 @@ class MppgdonTest(_PluginBase):
         return schemas.Response(success=True, message="", data=StatusData(
             enabled=self._enabled, version=self.plugin_version,
             pansou_url=self._base, token_set=bool(self._token), config_error=self._config_error,
+            sync_mode=("live" if self._sync.config.live else "dry_run") if self._enabled and self._sync else "unavailable",
+            sync_error=self._sync_error,
         ))
+
+    async def submit_share_sync(
+        self, payload: SyncRequest, _admin=Depends(get_current_active_superuser),
+    ) -> schemas.Response[SyncResult]:
+        sync = self._sync
+        if not self._enabled or sync is None:
+            return schemas.Response(success=True, data=SyncResult(status="not_sent"),
+                                    message=self._sync_error or "请先启用插件并保存 CMS 分享同步设置。")
+        result, message = await asyncio.to_thread(sync.submit, payload.ticket)
+        return schemas.Response(success=True, data=result, message=message)
 
     async def search(self, payload: SearchRequest) -> schemas.Response[SearchData]:
         """在请求生命周期内搜索，不阻塞宿主异步事件循环。"""
@@ -90,7 +119,7 @@ class MppgdonTest(_PluginBase):
             return schemas.Response(success=False, message="请先在配置中启用插件并保存。")
         if self._config_error:
             return schemas.Response(success=False, message=self._config_error)
-        base, token = self._base, self._token
+        base, token, sync = self._base, self._token, self._sync
 
         def run_search():
             """由工作线程持有锁，客户端取消也不提前开放第二次请求。"""
@@ -103,6 +132,8 @@ class MppgdonTest(_PluginBase):
 
         try:
             data = await asyncio.to_thread(run_search)
+            if sync is not None and sync is self._sync:
+                sync.add_tickets(data)
             return schemas.Response(success=True, message="", data=data)
         except SearchError as error:
             return schemas.Response(success=False, message=str(error))
@@ -111,7 +142,7 @@ class MppgdonTest(_PluginBase):
     def _search_sync(payload: SearchRequest, base: str, token: str) -> SearchData:
         """通过稳定网络 SDK 读取有界响应，拒绝重定向且不重试。"""
         headers = {"Accept": "application/json", "Content-Type": "application/json",
-                   "User-Agent": "MoviePilot-Mppgdon/0.3.1"}
+                   "User-Agent": "MoviePilot-Mppgdon/0.4.0"}
         if token:
             headers["Authorization"] = "Bearer " + token
         client = RequestUtils(headers=headers, timeout=35, verify=True)
@@ -148,12 +179,15 @@ class MppgdonTest(_PluginBase):
 
     def get_form(self) -> tuple[None, dict]:
         """为 Vue 配置页提供默认值；旧版 enabled 配置继续生效。"""
-        return None, {"enabled": False, "pansou_url": DEFAULT_URL, "pansou_token": ""}
+        return None, {"enabled": False, "pansou_url": DEFAULT_URL, "pansou_token": "",
+                      "cms_url": "", "cms_login_token": "", "cms_sync_path": "",
+                      "cms_sync_cid": "0", "cms_sync_live": False}
 
     def get_page(self) -> list:
         """详情页由联邦 Page 组件渲染。"""
         return []
 
     def stop_service(self) -> None:
-        """停止接收新的搜索；在途只读请求受35秒网络超时约束。"""
+        """停止接收新请求；不取消已经发出的 CMS 提交。"""
         self._enabled = False
+        self._sync = None

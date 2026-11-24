@@ -5,6 +5,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import types
 import unittest
@@ -28,21 +29,24 @@ class Response(BaseModel, Generic[T]):
 
 def load_plugin():
     """从生产命名空间加载插件，替换数据库基类和网络 SDK 边界。"""
-    modules = {name: types.ModuleType(name) for name in ["app", "app.plugins", "app.sdk", "app.sdk.plugin", "app.sdk.network", "app.schemas"]}
+    modules = {name: types.ModuleType(name) for name in ["app", "app.plugins", "app.sdk", "app.sdk.plugin", "app.sdk.network", "app.schemas", "app.api.dependencies.auth", "fastapi"]}
     modules["app.sdk.plugin"]._PluginBase = type("_PluginBase", (), {})
     modules["app.sdk.network"].RequestUtils = MagicMock()
     modules["app.schemas"].Response = Response
     modules["app"].schemas = modules["app.schemas"]
+    modules["app.api.dependencies.auth"].get_current_active_superuser = lambda: None
+    modules["fastapi"].Depends = lambda dependency: dependency
     name = "app.plugins.mppgdontest"
     spec = importlib.util.spec_from_file_location(name, SOURCE, submodule_search_locations=[str(SOURCE.parent)])
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, {**modules, name: module}):
         spec.loader.exec_module(module)
         search = sys.modules[name + ".search"]
-    return module, search
+        sync = sys.modules[name + ".share_sync"]
+    return module, search, sync
 
 
-MODULE, SEARCH = load_plugin()
+MODULE, SEARCH, SYNC = load_plugin()
 
 
 def fixture():
@@ -251,6 +255,63 @@ class PluginTests(unittest.TestCase):
 
         with patch.object(self.plugin, '_search_sync', side_effect=blocking):
             asyncio.run(scenario())
+
+
+class ShareSyncTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.settings = {"cms_url": "https://CMS.example:443/", "cms_login_token": "Bearer fake-login-token",
+                         "cms_sync_path": "/media/测试影视", "cms_sync_cid": "000", "cms_sync_live": True}
+
+    def prepare(self, **overrides):
+        sync = SYNC.ShareSync(SYNC.SyncConfig.from_settings(dict(self.settings, **overrides)), lambda: self.directory)
+        items = SEARCH.normalize_results(fixture(), SEARCH.SearchRequest(keyword="测试剧")).items
+        data = SEARCH.SearchData(keyword="测试剧", items=items, raw_115=3, duplicates=0, filtered=0)
+        data.items[1].password_conflict = True
+        sync.add_tickets(data)
+        self.assertIsNone(data.items[1].sync_ticket)
+        return sync, data.items[0]
+
+    def test_share_sync_dry_run_and_invalid_config(self):
+        with self.assertRaises(SEARCH.SearchError):
+            SYNC.SyncConfig.from_settings(dict(self.settings, cms_sync_path="/media/../etc"))
+        with self.assertRaises(ValidationError):
+            SYNC.SyncRequest(ticket="x" * 32, local_path="/media/other")
+        sync, item = self.prepare(cms_sync_live=False)
+        with patch.object(SYNC, "_request") as request:
+            self.assertEqual("not_sent", sync.submit("x" * 32)[0].status)
+            self.assertEqual("dry_run", sync.submit(item.sync_ticket)[0].status)
+            request.assert_not_called()
+        self.assertEqual([], list(self.directory.iterdir()))
+
+    def test_share_sync_payload_and_durable_unknown(self):
+        sync, item = self.prepare()
+        with patch.object(SYNC, "_request", side_effect=[(200, {"code": 200, "data": {}}), (0, {})]) as request:
+            self.assertEqual("unknown", sync.submit(item.sync_ticket)[0].status)
+            self.assertEqual("/api/config/share_115_sync", request.call_args_list[0].args[1])
+            self.assertEqual("/api/sync/share115", request.call_args.args[1])
+            self.assertEqual({"share_code": item.id, "receive_code": item.password, "cid": "0", "local_path": "/media/测试影视"},
+                             request.call_args.kwargs["body"])
+            self.assertEqual("fake-login-token", request.call_args.args[0].token)
+        restarted, item = self.prepare()
+        with patch.object(SYNC, "_request") as request:
+            self.assertEqual("unknown", restarted.submit(item.sync_ticket)[0].status)
+            request.assert_not_called()
+        journal = (self.directory / "cms-share-sync.sqlite3").read_bytes()
+        for value in (b"fake-login-token", item.id.encode(), b"/media/"):
+            self.assertNotIn(value, journal)
+
+    def test_share_sync_preflight_rejection_and_accepted_idempotency(self):
+        sync, item = self.prepare()
+        with patch.object(SYNC, "_request", return_value=(401, {})) as request:
+            self.assertEqual("not_sent", sync.submit(item.sync_ticket)[0].status)
+            self.assertEqual(1, request.call_count)
+        preflight = (200, {"code": "200", "data": {}})
+        with patch.object(SYNC, "_request", side_effect=[preflight, (400, {}), preflight, (200, {"code": 200})]) as request:
+            self.assertEqual("rejected", sync.submit(item.sync_ticket)[0].status)
+            self.assertEqual("accepted", sync.submit(item.sync_ticket)[0].status)
+            self.assertEqual("accepted", sync.submit(item.sync_ticket)[0].status)
+            self.assertEqual(4, request.call_count)
 
 
 if __name__ == '__main__':

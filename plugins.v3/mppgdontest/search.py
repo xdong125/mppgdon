@@ -57,6 +57,7 @@ class SearchItem(BaseModel):
     collection: bool = False
     password_conflict: bool = False
     duplicate_records: list[DuplicateRecord] = Field(default_factory=list)
+    sync_ticket: str | None = None
 
 
 class SearchData(BaseModel):
@@ -78,6 +79,8 @@ class StatusData(BaseModel):
     pansou_url: str
     token_set: bool
     config_error: str = ""
+    sync_mode: Literal["unavailable", "dry_run", "live"] = "unavailable"
+    sync_error: str = ""
 
 
 def normalize_base(value: str) -> str:

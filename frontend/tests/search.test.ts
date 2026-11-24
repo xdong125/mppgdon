@@ -3,8 +3,8 @@ import { flushPromises, mount } from '@vue/test-utils'
 import Page from '../src/Page.vue'
 import Config from '../src/Config.vue'
 
-function setup(post = vi.fn()) {
-  const api = {get: vi.fn().mockResolvedValue({success: true, message: '', data: {enabled: true, version: '0.2.0', pansou_url: 'https://example.test', token_set: false, config_error: ''}}), post}
+function setup(post = vi.fn(), sync_mode?: string) {
+  const api = {get: vi.fn().mockResolvedValue({success: true, message: '', data: {enabled: true, version: '0.4.0', pansou_url: 'https://example.test', token_set: false, config_error: '', sync_mode}}), post}
   const wrapper = mount(Page, {props: {api, pluginId: 'MppgdonTestCopy'}})
   return {wrapper, api}
 }
@@ -88,18 +88,48 @@ describe('search page host contract', () => {
     expect(api.post).toHaveBeenCalledOnce()
     wrapper.unmount()
   })
+  it('submits only the sync ticket in one click and blocks an uncertain outcome', async () => {
+    const post = vi.fn().mockResolvedValueOnce({success: true, message: '', data: {
+      items: [{...item, sync_ticket: 'fake-ticket'}], duplicates: 0, filtered: 0,
+    }}).mockResolvedValueOnce({success: true, message: '请到 CMS 核对', data: {status: 'unknown'}})
+    const {wrapper} = setup(post, 'live')
+    await flushPromises()
+    await wrapper.get('input[name=keyword]').setValue('测试剧')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    const button = wrapper.get('.mp-sync')
+    expect(button.text()).toBe('分享同步')
+    await button.trigger('click')
+    await flushPromises()
+    expect(post).toHaveBeenLastCalledWith('plugin/MppgdonTestCopy/share-sync', {ticket: 'fake-ticket'}, expect.anything())
+    expect(wrapper.get('.mp-sync-notice').text()).toBe('请到 CMS 核对')
+    expect(button.attributes('disabled')).toBeDefined()
+    expect(wrapper.find('dialog').exists()).toBe(false)
+    wrapper.unmount()
+  })
 })
 
 describe('configuration upgrade', () => {
   it('preserves enabled and unknown legacy config fields when saving', async () => {
     const wrapper = mount(Config, {props: {initialConfig: {enabled: true, message: 'legacy'}}})
     await wrapper.get('form').trigger('submit')
-    expect(wrapper.emitted('save')?.[0]?.[0]).toEqual({enabled: true, message: 'legacy', pansou_url: 'https://pansou.tiandechi.com', pansou_token: ''})
+    expect(wrapper.emitted('save')?.[0]?.[0]).toEqual(expect.objectContaining({enabled: true, message: 'legacy', pansou_url: 'https://pansou.tiandechi.com', pansou_token: '', cms_sync_live: false}))
   })
   it('rejects URLs containing credentials', async () => {
     const wrapper = mount(Config, {props: {initialConfig: {pansou_url: 'https://user:secret@host'}}})
     await wrapper.get('form').trigger('submit')
     expect(wrapper.emitted('save')).toBeUndefined()
     expect(wrapper.get('[role=alert]').text()).toContain('有效')
+  })
+  it('saves one set of sync settings and rejects a pasted CMS cookie', async () => {
+    const initialConfig = {cms_url: 'http://cms.example', cms_sync_path: '/media/测试', cms_sync_cid: '0',
+      cms_login_token: 'session=fake; other=bad', cms_sync_live: true}
+    const wrapper = mount(Config, {props: {initialConfig}})
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('save')).toBeUndefined()
+    expect(wrapper.get('[role=alert]').text()).toContain('Cookie')
+    await wrapper.get('.cms-settings input[type=password]').setValue('Bearer fake-login-token')
+    await wrapper.get('form').trigger('submit')
+    expect(wrapper.emitted('save')?.[0]?.[0]).toMatchObject({...initialConfig, cms_login_token: 'Bearer fake-login-token'})
   })
 })

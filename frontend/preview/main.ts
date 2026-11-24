@@ -1,7 +1,10 @@
 import { createApp, h, ref } from 'vue'
 import * as Vue from 'vue'
 import AppPage from '../src/AppPage.vue'
-const config = ref({enabled: true, pansou_url: 'https://pansou.tiandechi.com', token_set: false, config_error: ''})
+import Config from '../src/Config.vue'
+const config = ref({enabled: true, pansou_url: 'https://pansou.tiandechi.com', cms_url: 'https://cms.example',
+  cms_sync_path: '/media/演示影视', cms_sync_cid: '0', cms_sync_live: false})
+const configure = ref(location.search.includes('config'))
 const movies = [
   [1726, '钢铁侠', '2008', 7.7, '/78lPtwv72eTNqFW9COBYI0dWDJa.jpg'],
   [157336, '星际穿越', '2014', 8.5, '/gEU2QniE6E77NI6lCU6MxlNBvIx.jpg'],
@@ -18,23 +21,29 @@ const api = {
     const params = options?.params
     const data = path === 'media/search' ? [...movies, ...shows].filter(item => String(item.title).includes(params?.title ?? ''))
       : path.startsWith('discover/') ? (path.endsWith('_tvs') ? shows : movies).filter(item => Number(item.vote_average) >= (params?.vote_average ?? 0))
-      : {...config.value, version: '0.3.1'}
+      : {enabled: config.value.enabled, pansou_url: config.value.pansou_url, token_set: false,
+          config_error: '', sync_mode: config.value.cms_sync_live ? 'live' : 'dry_run', version: '0.4.0'}
     return {success: true, message: '', data}
   },
-  async post(_path: string, request: {keyword: string; year?: string}) {return {success: true, message: '', data: {
+  async post(path: string, request: {keyword: string; year?: string}) {
+    if (path.endsWith('/share-sync')) return {success: true, message: '模拟提交完成，未请求任何 CMS。', data: {status: 'dry_run'}}
+    return {success: true, message: '', data: {
     keyword: request.keyword, raw_115: 3, duplicates: 1, filtered: 0, truncated: false,
     items: [1,2].map(n => ({id: 'preview'+n, title: `${request.keyword} ${request.year ? `(${request.year}) ` : ''}4K WEB-DL · 样例 ${n}`,
       url: `https://115cdn.com/s/preview${n}`, password: 'demo', source: '演示数据（非真实分享）',
-      published: '', quality: '2160p', episode: '季集未标注', collection: false, password_conflict: false,
+      published: '', quality: '2160p', episode: '季集未标注', collection: false, password_conflict: false, sync_ticket: `preview-ticket-${n}`,
       duplicate_records: n === 1 ? [{title: `${request.keyword} 4K · 重复来源样例`, source: '演示频道',
         published: '2026-11-24T02:00:00Z', quality: '2160p', origin: 'raw'}] : []})),
   }}}
 }
-let PageComponent = AppPage
+let PageComponent = AppPage, ConfigComponent = Config
 if (location.search.includes('federation')) {
   // 开发宿主提供唯一的 Vue 实例，用真正的构建产物验证联邦入口。
   const remote = await import('../../plugins.v3/mppgdontest/dist/assets/remoteEntry.js')
   await remote.init({vue: {[Vue.version]: {get: () => Promise.resolve(() => Vue), loaded: true, from: 'preview-host', shareConfig: {singleton: true, requiredVersion: false}}}})
   PageComponent = (await remote.get('./AppPage'))().default
+  ConfigComponent = (await remote.get('./Config'))().default
 }
-createApp({render: () => h(PageComponent, {api, pluginId: 'MppgdonTest'})}).mount('#app')
+createApp({render: () => configure.value
+  ? h(ConfigComponent, {initialConfig: config.value, onSave: (value: typeof config.value) => {config.value = value; configure.value = false}, onSwitch: () => {configure.value = false}})
+  : h(PageComponent, {api, pluginId: 'MppgdonTest'})}).mount('#app')
