@@ -26,6 +26,8 @@ python -m compileall plugins.v3/mppgdontest
 python tests/v3/mppgdontest/test_plugin.py -v
 ```
 
-## 待用户实机验证
+## 用户实机反馈
 
-当前未连接或操作用户 MoviePilot，因此市场发现、实际安装、配置持久化、真实详情页渲染及重启后加载仍待用户测试。安装步骤见 README。出现问题时需要 MP 的完整 V3 版本号和脱敏错误日志；无需提供密码或 Token。
+2026-11-24，用户明确反馈“安装成功了”。据用户实测确认，当前测试插件已能安装到其 MoviePilot V3。配置持久化、详情页渲染、启停及重启后加载尚未获得进一步反馈，不因安装成功自动视为全部通过。
+
+安装步骤见 README。出现问题时需要 MP 的完整 V3 版本号和脱敏错误日志；无需提供密码或 Token。
